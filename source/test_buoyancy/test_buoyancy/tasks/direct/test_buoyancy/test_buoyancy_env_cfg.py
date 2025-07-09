@@ -13,6 +13,10 @@ from isaaclab.sim import SimulationCfg
 import isaaclab.sim as sim_utils
 from isaaclab.utils import configclass
 
+import os
+extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+boat_path = "asset/Boat74/Boat74/boat74.usd"
+
 
 @configclass
 class TestBuoyancyEnvCfg(DirectRLEnvCfg):
@@ -32,8 +36,7 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
     boatCfg = RigidObjectCfg(
                 prim_path="/World/envs/env_.*/barge",
                 spawn=sim_utils.UsdFileCfg(
-                    usd_path="/home/marmot/junkai/project/tugboat/maritime_simulator_demo/test_buoyancy/source/test_buoyancy/asset/Boat74/Boat74/boat74.usd",
-                    # usd_path="source/test_buoyancy/asset/mesh/barge.usd",
+                    usd_path=os.path.join(extention_path,boat_path),
                     articulation_props = sim_utils.ArticulationRootPropertiesCfg(
                         articulation_enabled=False,
                     ),
@@ -59,16 +62,16 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
 
     # custom parameters/scales
     # - controllable joint
-    cart_dof_name = "slider_to_cart"
-    pole_dof_name = "cart_to_pole"
+    # cart_dof_name = "slider_to_cart"
+    # pole_dof_name = "cart_to_pole"
     # - action scale
-    action_scale = 100.0  # [N]
-    # - reward scales
-    rew_scale_alive = 1.0
-    rew_scale_terminated = -2.0
-    rew_scale_pole_pos = -1.0
-    rew_scale_cart_vel = -0.01
-    rew_scale_pole_vel = -0.005
-    # - reset states/conditions
-    initial_pole_angle_range = [-0.25, 0.25]  # pole angle sample range on reset [rad]
-    max_cart_pos = 3.0  # reset if cart exceeds this position [m]
+    # action_scale = 100.0  # [N]
+    # # - reward scales
+    # rew_scale_alive = 1.0
+    # rew_scale_terminated = -2.0
+    # rew_scale_pole_pos = -1.0
+    # rew_scale_cart_vel = -0.01
+    # rew_scale_pole_vel = -0.005
+    # # - reset states/conditions
+    # initial_pole_angle_range = [-0.25, 0.25]  # pole angle sample range on reset [rad]
+    # max_cart_pos = 3.0  # reset if cart exceeds this position [m]

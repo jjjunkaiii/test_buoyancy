@@ -70,5 +70,4 @@ tests/
 # Docker history
 .isaac-lab-docker-history
 
-source/test_buoyancy/asset/mesh/Boat\ USD/Cargo_Ship.usdz
-source/test_buoyancy/asset/mesh/barge.STL
+source/test_buoyancy/asset/

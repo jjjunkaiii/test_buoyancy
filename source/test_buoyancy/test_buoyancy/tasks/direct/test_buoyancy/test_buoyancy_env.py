@@ -25,6 +25,8 @@ import numpy as np
 import trimesh
 import time
 
+import os
+
 '''
 for test env, the shapes of actions, observations, rewards, dones are:
 Out of bounds shape: torch.Size([4096]), Time out shape: torch.Size([4096])
@@ -38,6 +40,9 @@ test in terminal:
 python scripts/random_agent.py --task=Template-Test-Buoyancy-Direct-v0
 '''
 
+extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
+barge_mesh_path = "asset/urdf/boat74/meshes/base_link.STL"
 
 class TestBuoyancyEnv(DirectRLEnv):
     cfg: TestBuoyancyEnvCfg
@@ -69,36 +74,12 @@ class TestBuoyancyEnv(DirectRLEnv):
         # self.joint_vel = self.robot.data.joint_vel
 
     def _setup_scene(self):
-        # self.robot = Articulation(self.cfg.robot_cfg)
         self.robot = RigidObject(self.cfg.boatCfg)
-        # add ground plane
-        # spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        # water_surface_cfg = RigidObjectCfg(
-        #     prim_path="/World/envs/env_.*/water_surface",
-        #     spawn=sim_utils.UsdFileCfg(
-        #         usd_path="/home/marmot/junkai/project/tugboat/test_buoyancy/source/test_buoyancy/asset/water_plane.usd",
-        #         visual_material=PreviewSurfaceCfg(
-        #             diffuse_color=(0.2, 0.6, 1.0),
-        #             emissive_color=(0.0, 0.0, 0.0),
-        #             roughness=0.05,
-        #             metallic=0.0,
-        #             opacity=0.8,
-        #         ),
-        #         rigid_props=None,
-        #         collision_props=None,
-        #         visible=True,
-        #     ),
-        #     init_state=RigidObjectCfg.InitialStateCfg(
-        #         pos=(0.0, 0.0, 0.0),
-        #         rot=(1.0, 0.0, 0.0, 0.0),
-        #     ),
-        # )
         water_surface_cfg = RigidObjectCfg(
             prim_path="/World/water_surface",
             spawn=sim_utils.UsdFileCfg(
-                usd_path="/home/marmot/junkai/project/tugboat/IsaacLab/_isaac_sim/exts/omni.ocean-0.4.1/data/ocean_small.usd",
+                usd_path=os.path.join(extention_path, water_path),
                 visual_material=PreviewSurfaceCfg(
-                    # diffuse_color=(0.2, 0.6, 1.0),
                     diffuse_color=(0.05, 0.15, 0.4),
                     emissive_color=(0.0, 0.0, 0.0),
                     roughness=0.05,
@@ -122,10 +103,9 @@ class TestBuoyancyEnv(DirectRLEnv):
         if self.device == "cpu":
             self.scene.filter_collisions(global_prim_paths=[])
         # add articulation to scene
-        # self.scene.articulations["robot"] = self.robot
         self.scene.rigid_objects["boat74"] = self.robot
         # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+        light_cfg = sim_utils.DomeLightCfg(intensity=800.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
@@ -207,13 +187,30 @@ class TestBuoyancyEnv(DirectRLEnv):
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self):
-        inside_mask = np.load("source/test_buoyancy/asset/masks/barge_inside_mask_barge.npy")
-        valid_voxels = np.load("source/test_buoyancy/asset/masks/barge_valid_voxels.npy")
-        voxel_volume = np.load("source/test_buoyancy/asset/masks/barge_voxel_volume.npy")
+        voxel_res = 32
+        mesh = trimesh.load(os.path.join(extention_path,barge_mesh_path))
+        bounds = mesh.bounds
+        min_bound, max_bound = bounds[0], bounds[1]
+        interval = (max_bound - min_bound) / voxel_res
+        xs = np.arange(min_bound[0], max_bound[0], interval[0])
+        ys = np.arange(min_bound[1], max_bound[1], interval[1])
+        zs = np.arange(min_bound[2], max_bound[2], interval[2])
+        xv, yv, zv = np.meshgrid(xs, ys, zs, indexing='ij')
+        voxel_centers = np.vstack([xv.ravel(), yv.ravel(), zv.ravel()]).T
+        t_start = time.time()
+        inside_mask = mesh.contains(voxel_centers)
+        t_end = time.time()
+        print("Mask generated, time used: ", t_end-t_start)
 
+        valid_voxels = voxel_centers[inside_mask]
+        voxel_volume = interval[0] * interval[1] * interval[2]
+
+        self.voxel_l = interval[0]
+        self.voxel_w = interval[1]
+        self.voxel_h = interval[2]
         self.inside_mask = torch.tensor(inside_mask, dtype=torch.bool, device=self.device)
         self.valid_voxels = torch.tensor(valid_voxels, dtype=torch.float32, device=self.device)
-        self.voxel_volume = torch.tensor(voxel_volume, dtype=torch.float32, device=self.device) # TODO:approximated value
+        self.voxel_volume = torch.tensor(voxel_volume, dtype=torch.float32, device=self.device) # only displays the approximated value, torch will use the precise value for calculation
         self.voxel_pos_w = torch.zeros(self.num_envs, self.valid_voxels.shape[0], self.valid_voxels.shape[1], dtype=torch.float32, device=self.device)      
 
     def get_pose_mat(self):
@@ -276,12 +273,12 @@ class TestBuoyancyEnv(DirectRLEnv):
                 #     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
                 # ),
                 "cube_red": sim_utils.CuboidCfg(
-                size=(0.07, 0.055, 0.03),
+                size=(self.voxel_l*0.8, self.voxel_w*0.8, self.voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0),),
                 visible=False,
                 ),
                 "cube_blue": sim_utils.CuboidCfg(
-                size=(0.07, 0.055, 0.035),
+                size=(self.voxel_l*0.8, self.voxel_w*0.8, self.voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
                 visible=False,
                 ),
