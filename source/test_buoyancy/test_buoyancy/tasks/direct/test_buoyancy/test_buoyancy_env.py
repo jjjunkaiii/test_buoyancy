@@ -54,11 +54,11 @@ class TestBuoyancyEnv(DirectRLEnv):
         self.buoyancy_torque_b = torch.zeros((self.num_envs, 3), device=self.device)
         self.buoyancy_centre_w = torch.zeros((self.num_envs, 3), device=self.device)
         self.buoyancy_centre_b = torch.zeros((self.num_envs, 3), device=self.device)
-        self.debug_visualisation = False
+        self._load_voxel()
+
+        self.debug_visualisation = True
         if self.debug_visualisation:
             self._define_markers()
-
-        self._load_voxel()
 
         # time.sleep(10) # TODO:remove in the future
 
@@ -94,7 +94,7 @@ class TestBuoyancyEnv(DirectRLEnv):
         #     ),
         # )
         water_surface_cfg = RigidObjectCfg(
-            prim_path="/World/envs/water_surface",
+            prim_path="/World/water_surface",
             spawn=sim_utils.UsdFileCfg(
                 usd_path="/home/marmot/junkai/project/tugboat/IsaacLab/_isaac_sim/exts/omni.ocean-0.4.1/data/ocean_small.usd",
                 visual_material=PreviewSurfaceCfg(
@@ -202,6 +202,8 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def step(self, action):
         super().step(action)
+        if self.debug_visualisation:
+            self._visualise_markers()
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self):
@@ -253,7 +255,7 @@ class TestBuoyancyEnv(DirectRLEnv):
         c_m_w = self.robot.data.body_com_pos_w[env][0]
         c_b_w = self.buoyancy_centre_w[env]
         c_delta_w = c_m_w - c_b_w
-        self.buoyancy_torque_w[env] = torch.cross(c_delta_w, self.buoyancy_force_w[env])
+        self.buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, self.buoyancy_force_w[env])
         self.buoyancy_force_b[env] = torch.matmul(self.R[env].T, self.buoyancy_force_w[env])
         self.buoyancy_torque_b[env] = torch.matmul(self.R[env].T, self.buoyancy_torque_w[env])
 
@@ -273,13 +275,15 @@ class TestBuoyancyEnv(DirectRLEnv):
                 #     scale=(1.0, 0.5, 0.5),
                 #     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
                 # ),
-                "sphere_green": sim_utils.SphereCfg(
-                    radius=0.005,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                "cube_red": sim_utils.CuboidCfg(
+                size=(0.07, 0.055, 0.03),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0),),
+                visible=False,
                 ),
-                "sphere_blue": sim_utils.SphereCfg(
-                    radius=0.005,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                "cube_blue": sim_utils.CuboidCfg(
+                size=(0.07, 0.055, 0.035),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+                visible=False,
                 ),
             },
         )
@@ -291,10 +295,11 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def _visualise_markers(self):
         rigid_body_states = self.robot.data.root_link_pose_w
-        mask = self.robot.data.root_link_pose_w[0, :, 2] < 0
+        mask = self.voxel_pos_w[0, :, 2] < 0
         self.marker_indices[:] = mask.int()
-        # marker_pose = 
-        pass
+        self.marker_translations = self.voxel_pos_w[0]
+        self.marker_orientations[:] = rigid_body_states[0][3:7]
+        self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)    
 
 # @torch.jit.script
 # def compute_rewards(

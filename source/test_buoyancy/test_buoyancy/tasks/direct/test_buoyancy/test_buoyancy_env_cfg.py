@@ -45,12 +45,14 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
                         angular_damping=3,
                         enable_gyroscopic_forces=True,
                         ),
+                    visible = True,
                 ),
                 init_state=RigidObjectCfg.InitialStateCfg(
                     pos=(0.0, 0.0, 1.0),
                     rot=(1.0, 0.0, 0.0, 0.0)
                     ),
                 debug_vis = True
+
     )
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=4.0, replicate_physics=True)
