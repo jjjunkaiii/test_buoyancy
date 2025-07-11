@@ -15,7 +15,9 @@ from isaaclab.utils import configclass
 
 import os
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
-boat_path = "asset/Boat74/Boat74/boat74.usd"
+# boat_path = "asset/Boat74/Boat74/boat74.usd"
+boat_path = "asset/URDF2/barge.SLDASM/urdf/barge.usd"
+
 
 
 @configclass
@@ -51,14 +53,16 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
                     visible = True,
                 ),
                 init_state=RigidObjectCfg.InitialStateCfg(
-                    pos=(0.0, 0.0, 1.0),
-                    rot=(1.0, 0.0, 0.0, 0.0)
+                    pos=(0.0, 0.0, 20.0),
+                    rot=(-0.7071, 0.7071, 0, 0),
+                    # rot=(-0.7071, 0.2071, 0.33, 0.33), # tilted pose for demo
                     ),
                 debug_vis = True
 
     )
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=4.0, replicate_physics=True)
+    water_level = 5.0
 
     # custom parameters/scales
     # - controllable joint

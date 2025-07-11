@@ -41,8 +41,10 @@ python scripts/random_agent.py --task=Template-Test-Buoyancy-Direct-v0
 '''
 
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+# water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
+# barge_mesh_path = "asset/urdf/boat74/meshes/base_link.STL"
 water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
-barge_mesh_path = "asset/urdf/boat74/meshes/base_link.STL"
+barge_mesh_path = "asset/URDF2/barge.SLDASM/meshes/base_link.STL"
 
 class TestBuoyancyEnv(DirectRLEnv):
     cfg: TestBuoyancyEnvCfg
@@ -89,10 +91,10 @@ class TestBuoyancyEnv(DirectRLEnv):
                 rigid_props=None,
                 collision_props=None,
                 visible=True,
-                scale = [0.03, 0.03, 0.03],
+                scale = [0.3, 0.3, 0.3],
             ),
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.0, 0.0, 0.0),
+                pos=(0.0, 0.0, self.cfg.water_level),
                 rot=(0.7071, 0.7071, 0.0, 0.0),
             ),
         )
@@ -184,10 +186,11 @@ class TestBuoyancyEnv(DirectRLEnv):
         super().step(action)
         if self.debug_visualisation:
             self._visualise_markers()
+        self.get_water_surface()
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self):
-        voxel_res = 32
+        voxel_res = 64
         mesh = trimesh.load(os.path.join(extention_path,barge_mesh_path))
         bounds = mesh.bounds
         min_bound, max_bound = bounds[0], bounds[1]
@@ -227,7 +230,7 @@ class TestBuoyancyEnv(DirectRLEnv):
         for i in range(self.num_envs):
             self.voxel_pos_w[i] = (self.rot_mats[i][:3, :3] @ self.valid_voxels.T + self.rot_mats[i][:3, 3].unsqueeze(1)).T
     
-    def apply_buoyancy(self, water_level=0.0, water_density=1500.0):
+    def apply_buoyancy(self, water_density=1500.0):
         """
         Apply buoyancy force to the rigid object based on the voxel positions and water level.
         """
@@ -236,15 +239,14 @@ class TestBuoyancyEnv(DirectRLEnv):
         # Calculate the buoyancy force for each voxel
         
         for i in range(self.num_envs):
-            submerged_voxels = self.voxel_pos_w[i][self.voxel_pos_w[i][:, 2] < water_level]
+            submerged_voxels = self.voxel_pos_w[i][self.voxel_pos_w[i][:, 2] < self.cfg.water_level]
             num_submerged_voxels = submerged_voxels.shape[0]
             if num_submerged_voxels != 0:
                 submerged_volume = num_submerged_voxels * self.voxel_volume.item()
                 self.buoyancy_force_w[i, 2] = submerged_volume * water_density * 9.81
                 self.buoyancy_centre_w[i] = submerged_voxels.mean(dim=0)
                 self.calculate_buoyancy_wrench(i)
-                self.robot.set_external_force_and_torque(forces=self.buoyancy_force_b[i],torques=-self.buoyancy_torque_b[i],env_ids=i)# TODO
-                # self.robot.set_external_force_and_torque(forces=self.buoyancy_force_b[i],torques=torch.zeros(3),env_ids=i)
+                self.robot.set_external_force_and_torque(forces=self.buoyancy_force_b[i],torques=-self.buoyancy_torque_b[i],env_ids=i)
             else:
                 self.robot.set_external_force_and_torque(forces=torch.zeros(3),torques=torch.zeros(3),env_ids=i)
                 
@@ -255,6 +257,18 @@ class TestBuoyancyEnv(DirectRLEnv):
         self.buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, self.buoyancy_force_w[env])
         self.buoyancy_force_b[env] = torch.matmul(self.R[env].T, self.buoyancy_force_w[env])
         self.buoyancy_torque_b[env] = torch.matmul(self.R[env].T, self.buoyancy_torque_w[env])
+
+    def get_water_surface(self):
+        import omni.graph.core as og
+        node_path = "/World/water_surface/PushGraph/ocean_deformer"
+        self.water_deformer_node = og.get_node_by_path(node_path)
+
+        points_attr = self.water_deformer_node.get_attribute("outputs:points")
+        points_array = points_attr.get_attribute_data()
+        data = points_array.get()
+        # db = og.Database(self.water_deformer_node)
+        # self.water_deformer_data = og.Database(node=self.water_deformer_node)
+        a=1#debug break point, TODO: remove
 
 # ----------- debug visualisations -----------
     def _define_markers(self) -> VisualizationMarkers:
@@ -281,7 +295,12 @@ class TestBuoyancyEnv(DirectRLEnv):
                 size=(self.voxel_l*0.8, self.voxel_w*0.8, self.voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
                 visible=False,
+                ),                
+                "frame": sim_utils.UsdFileCfg(
+                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
+                    scale=(1, 1, 1),
                 ),
+
             },
         )
         self.marker = VisualizationMarkers(marker_cfg)
@@ -292,7 +311,7 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def _visualise_markers(self):
         rigid_body_states = self.robot.data.root_link_pose_w
-        mask = self.voxel_pos_w[0, :, 2] < 0
+        mask = self.voxel_pos_w[0, :, 2] < self.cfg.water_level
         self.marker_indices[:] = mask.int()
         self.marker_translations = self.voxel_pos_w[0]
         self.marker_orientations[:] = rigid_body_states[0][3:7]
