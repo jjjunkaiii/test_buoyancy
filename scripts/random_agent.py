@@ -24,7 +24,7 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 args_cli.task = 'Template-Test-Buoyancy-Direct-v0'
-# args_cli.headless = 0
+args_cli.headless = False
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)

@@ -24,7 +24,7 @@ from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 import numpy as np
 import trimesh
 import time
-
+import omni.graph.core as og
 import os
 
 '''
@@ -61,11 +61,23 @@ class TestBuoyancyEnv(DirectRLEnv):
         self.buoyancy_torque_b = torch.zeros((self.num_envs, 3), device=self.device)
         self.buoyancy_centre_w = torch.zeros((self.num_envs, 3), device=self.device)
         self.buoyancy_centre_b = torch.zeros((self.num_envs, 3), device=self.device)
+        
         self._load_voxel()
 
         self.debug_visualisation = True
         if self.debug_visualisation:
             self._define_markers()
+
+        self.oceandeformer = OceanDeformer(device=self.device)
+
+        self.start_time = time.process_time()
+
+        # x = self.debug_attr_data[:, 0]
+        # y = self.debug_attr_data[:, 2]
+        # plt.figure(figsize=(15, 15))
+        # plt.scatter(x, y, s=1, alpha=0.3)
+        # plt.title("Deformed Grid")
+        # plt.show()
 
         # time.sleep(10) # TODO:remove in the future
 
@@ -186,7 +198,7 @@ class TestBuoyancyEnv(DirectRLEnv):
         super().step(action)
         if self.debug_visualisation:
             self._visualise_markers()
-        self.get_water_surface()
+
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self):
@@ -215,6 +227,7 @@ class TestBuoyancyEnv(DirectRLEnv):
         self.valid_voxels = torch.tensor(valid_voxels, dtype=torch.float32, device=self.device)
         self.voxel_volume = torch.tensor(voxel_volume, dtype=torch.float32, device=self.device) # only displays the approximated value, torch will use the precise value for calculation
         self.voxel_pos_w = torch.zeros(self.num_envs, self.valid_voxels.shape[0], self.valid_voxels.shape[1], dtype=torch.float32, device=self.device)      
+        self.voxel_submerged_flag = torch.zeros(self.num_envs, self.valid_voxels.shape[0], 1, dtype=torch.int, device=self.device)
 
     def get_pose_mat(self):
         rigid_body_states = self.robot.data.root_link_pose_w
@@ -239,8 +252,10 @@ class TestBuoyancyEnv(DirectRLEnv):
         # Calculate the buoyancy force for each voxel
         
         for i in range(self.num_envs):
+            # water_height, submerged_mask = self.oceandeformer.compute(self.voxel_pos_w[i], self.cfg.water_level)
             submerged_voxels = self.voxel_pos_w[i][self.voxel_pos_w[i][:, 2] < self.cfg.water_level]
-            num_submerged_voxels = submerged_voxels.shape[0]
+            # submerged_voxels = self.voxel_pos_w[i][submerged_mask]
+            num_submerged_voxels = submerged_voxels.shape[0] #TODO: pre-allocate memory to speed up in the future
             if num_submerged_voxels != 0:
                 submerged_volume = num_submerged_voxels * self.voxel_volume.item()
                 self.buoyancy_force_w[i, 2] = submerged_volume * water_density * 9.81
@@ -257,18 +272,6 @@ class TestBuoyancyEnv(DirectRLEnv):
         self.buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, self.buoyancy_force_w[env])
         self.buoyancy_force_b[env] = torch.matmul(self.R[env].T, self.buoyancy_force_w[env])
         self.buoyancy_torque_b[env] = torch.matmul(self.R[env].T, self.buoyancy_torque_w[env])
-
-    def get_water_surface(self):
-        import omni.graph.core as og
-        node_path = "/World/water_surface/PushGraph/ocean_deformer"
-        self.water_deformer_node = og.get_node_by_path(node_path)
-
-        points_attr = self.water_deformer_node.get_attribute("outputs:points")
-        points_array = points_attr.get_attribute_data()
-        data = points_array.get()
-        # db = og.Database(self.water_deformer_node)
-        # self.water_deformer_data = og.Database(node=self.water_deformer_node)
-        a=1#debug break point, TODO: remove
 
 # ----------- debug visualisations -----------
     def _define_markers(self) -> VisualizationMarkers:
@@ -296,26 +299,49 @@ class TestBuoyancyEnv(DirectRLEnv):
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
                 visible=False,
                 ),                
-                "frame": sim_utils.UsdFileCfg(
-                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-                    scale=(1, 1, 1),
+                "arrow_z": sim_utils.UsdFileCfg(
+                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
+                    scale=(1, 1, 5),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
                 ),
 
             },
         )
         self.marker = VisualizationMarkers(marker_cfg)
 
-        self.marker_indices = torch.zeros(self.voxel_pos_w.shape[1], dtype=torch.float32, device=self.device)
-        self.marker_translations = torch.zeros(self.voxel_pos_w.shape[1], 3, dtype=torch.float32, device=self.device)
-        self.marker_orientations = torch.zeros(self.voxel_pos_w.shape[1], 4, dtype=torch.float32, device=self.device)
+        self.marker_indices = torch.zeros(self.voxel_pos_w.shape[1]+3, dtype=torch.float32, device=self.device)
+        self.marker_translations = torch.zeros(self.voxel_pos_w.shape[1]+3, 3, dtype=torch.float32, device=self.device)
+        self.marker_orientations = torch.zeros(self.voxel_pos_w.shape[1]+3, 4, dtype=torch.float32, device=self.device)
 
     def _visualise_markers(self):
         rigid_body_states = self.robot.data.root_link_pose_w
         mask = self.voxel_pos_w[0, :, 2] < self.cfg.water_level
-        self.marker_indices[:] = mask.int()
-        self.marker_translations = self.voxel_pos_w[0]
-        self.marker_orientations[:] = rigid_body_states[0][3:7]
-        self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)    
+        self.marker_indices[:self.voxel_pos_w.shape[1]] = mask.int()
+        self.marker_translations[:self.voxel_pos_w.shape[1]] = self.voxel_pos_w[0]
+        self.marker_orientations[:self.voxel_pos_w.shape[1]] = rigid_body_states[0][3:7]
+
+        # water related markers
+        # self.water_surface_target_pos = torch.tensor([[50,0,0],
+        #                                               [0,50,0],
+        #                                               [-50,0,0],
+        #                                               [0,-50,0],
+        #                                               [25,0,0],
+        #                                               [0,25,0],
+        #                                               [-25,0,0],
+        #                                               [0,-25,0],
+        #                                               [0,0,0],], device=self.device)
+        self.water_surface_target_pos = torch.tensor([[0,0,0],
+                                                      [5,0,0],
+                                                      [10,0,0],], device=self.device)
+        self.marker_indices[-3:] = torch.full((3,), 2, device=self.device)
+        self.marker_translations[-3:] = self.water_surface_target_pos
+        disp, _ = self.oceandeformer.compute(self.water_surface_target_pos, self.cfg.water_level)
+        self.marker_translations[-3:, 2] = disp
+        self.marker_orientations[-3:] = torch.tensor([0.7071,0,-0.7071,0], device=self.device).repeat(3,1)
+
+        self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)  
+
+
 
 # @torch.jit.script
 # def compute_rewards(
@@ -337,3 +363,179 @@ class TestBuoyancyEnv(DirectRLEnv):
 #     rew_pole_vel = rew_scale_pole_vel * torch.sum(torch.abs(pole_vel).unsqueeze(dim=1), dim=-1)
 #     total_reward = rew_alive + rew_termination + rew_pole_pos + rew_cart_vel + rew_pole_vel
 #     return total_reward
+
+
+# Ocean Deformer
+class OceanDeformer:
+    def __init__(self, profile_res=8192, profile_data_num=1000, direction_count=128, gravity=9.80665, device="cuda"):
+        self.node = og.get_node_by_path("/World/water_surface/PushGraph/ocean_deformer")
+        self.profile_res = profile_res
+        self.profile_data_num = profile_data_num
+        self.direction_count = direction_count
+        self.device = device
+        self.profile_extent = 410.0
+        self.gravity = gravity
+        # Generate shared random arrays (fixed seed to match Warp)
+        np.random.seed(7)
+        self.rand_arr_profile = torch.tensor(
+            np.random.rand(self.profile_data_num), dtype=torch.float32, device=device
+        )
+        self.rand_arr_points = torch.tensor(
+            np.random.rand(self.direction_count), dtype=torch.float32, device=device
+        )
+
+        self.update_attr()
+
+        self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float32, device=self.device)
+
+    def update_attr(self):
+        # get info from node
+        self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
+        self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
+        self.inputs_direction = self.node.get_attribute("inputs:direction").get()
+        self.inputs_directionality = self.node.get_attribute("inputs:directionality").get()
+        self.inputs_scale = self.node.get_attribute("inputs:scale").get()
+        self.inputs_waterDepth = self.node.get_attribute("inputs:waterDepth").get()
+        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").get()
+        self.inputs_windSpeed = self.node.get_attribute("inputs:windSpeed").get()
+
+        # process info (torch tensors)
+        self.amplitude = torch.clamp(torch.tensor(float(self.inputs_waveAmplitude), device=self.device), 0.0001, 1000.0)
+        self.minWavelength = 0.1
+        self.maxWavelength = 250.0
+        self.direction = torch.tensor(float(self.inputs_direction) % (2 * np.pi), device=self.device)
+        self.directionality = torch.clamp(torch.tensor(0.02 * float(self.inputs_directionality), device=self.device), 0.0, 1.0)
+        self.windspeed = torch.clamp(torch.tensor(float(self.inputs_windSpeed), device=self.device), 0.0, 30.0)
+        self.waterdepth = torch.clamp(torch.tensor(float(self.inputs_waterDepth), device=self.device), 1.0, 1000.0)
+        self.scale = torch.clamp(torch.tensor(float(self.inputs_scale), device=self.device), 0.001, 10000.0)
+        self.antiAlias = int(bool(self.inputs_antiAlias))
+        self.campos = torch.tensor(self.inputs_cameraPos, device=self.device, dtype=torch.float32)
+
+        # update time attribute
+        self.update_time_attr()
+
+    def update_time_attr(self):
+        self.inputs_time = self.node.get_attribute("inputs:time").get()
+        self.time = torch.tensor(float(self.inputs_time), device=self.device)
+
+    def compute(self, points, water_level):
+        time1 = time.time()
+        self.update_time_attr()
+        time2 = time.time()
+        self.update_profile()
+        time3 = time.time()
+        disp, mask = self.update_points(points, water_level)
+        time4 = time.time()
+
+        # print("time for update_time", time2-time1)
+        # print("time for update_profile", time3-time2)
+        # print("time for update_points", time4-time3)
+
+        return disp, mask
+
+    def update_profile(self):
+        # Compute omega range
+        omega0 = np.sqrt(2.0 * np.pi * self.gravity / self.minWavelength)
+        omega1 = np.sqrt(2.0 * np.pi * self.gravity / self.maxWavelength)
+        omega = torch.linspace(omega0, omega1, self.profile_data_num, device=self.device)
+        omega_delta = (omega1 - omega0) / self.profile_data_num
+
+        # Spatial sample positions
+        x_idx = torch.arange(self.profile_res, device=self.device)
+        space_pos = self.profile_extent * x_idx / self.profile_res  # (res,)
+
+        # Wavenumber and phase
+        k = omega ** 2 / self.gravity                     # (N,)
+        phase = -self.time * omega + self.rand_arr_profile * 2.0 * np.pi  # (N,)
+
+        # Amplitudes from spectrum
+        amp = 10000.0 * torch.sqrt(torch.abs(2.0 * omega_delta * self.TMA_spectrum(omega, 100.0, 3.3)))  # (N,)
+
+        # Helper to compute displacement at given spatial position
+        def compute_disp_at(pos):  # pos: (res,)
+            angle = k.unsqueeze(1) * pos.unsqueeze(0) + phase.unsqueeze(1)  # (N, res)
+            sin_phase = torch.sin(angle)
+            cos_phase = torch.cos(angle)
+            disp_x = (amp.unsqueeze(1) * sin_phase).sum(dim=0)  # (res,)
+            disp_y = -(amp.unsqueeze(1) * cos_phase).sum(dim=0)  # (res,)
+            return torch.stack([disp_x, disp_y, torch.zeros_like(disp_x)], dim=1) / self.profile_data_num  # (res, 3)
+
+        # Compute displacements at three spatial positions
+        disp1 = compute_disp_at(space_pos)                          # space_pos_1
+        disp2 = compute_disp_at(space_pos + self.profile_extent)    # space_pos_2
+        disp3 = compute_disp_at(space_pos - self.profile_extent)    # space_pos_3
+
+        # Blending coefficients
+        s = x_idx / self.profile_res  # (res,)
+        c1 = 2.0 * s**3 - 3.0 * s**2 + 1.0
+        c2 = -2.0 * s**3 + 3.0 * s**2
+
+        # Final profile
+        self.profile = disp1 + c1.unsqueeze(1) * disp2 + c2.unsqueeze(1) * disp3  # (res, 3)
+
+    def update_points(self, points, water_level=0.0):
+
+        d = torch.arange(self.direction_count, device=self.device, dtype=torch.float32)
+        r = d * 2.0 * np.pi / self.direction_count + 0.02
+        dir_x = torch.cos(r)
+        dir_y = torch.sin(r)
+
+        points_xy = torch.stack([points[:, 0], points[:, 1]], dim=1).float()  # shape: (N, 2)
+        dirs = torch.stack([dir_x, dir_y], dim=1)  # shape: (D, 2)
+        dots = torch.matmul(points_xy, dirs.T)     # shape: (N, D)
+
+        x_proj = dots / (self.profile_extent * self.scale) + self.rand_arr_points  # shape: (N, D)
+        x_scaled = x_proj * self.profile_res
+
+        pos0_raw = torch.floor(x_scaled).long()
+        pos0 = pos0_raw.remainder(self.profile_res)
+        pos1 = (pos0 + 1) % self.profile_res
+
+        w = x_scaled - pos0.float()               # shape: (N, D)
+        p0 = self.profile[pos0, 1]                # (N, D)
+        p1 = self.profile[pos1, 1]                # (N, D)
+
+        direction_exp = self.direction.unsqueeze(-1)  # shape: (D, 1)
+        r_exp = r.unsqueeze(0)                        # shape: (1, D)
+        t = torch.abs(direction_exp - r_exp)
+        t = torch.where(t > np.pi, 2 * np.pi - t, t)
+        t = t ** 1.2
+
+        directionality_exp = self.directionality.unsqueeze(-1)  # shape: (D, 1)
+        dir_amp = (2 * t**3 - 3 * t**2 + 1) + (-2 * t**3 + 3 * t**2) * (1.0 - directionality_exp)
+        dir_amp = dir_amp / (1.0 + 10.0 * directionality_exp)
+
+        dir_amp_diag = torch.diagonal(dir_amp, 0)  # shape: (D,)
+
+        prof_height = dir_amp_diag.unsqueeze(0) * ((1.0 - w) * p0 + w * p1)  # shape: (N, D)
+        disp_z = torch.sum(dir_y.unsqueeze(0) * prof_height, dim=1)         # shape: (N,)
+
+        disp_z = self.amplitude * disp_z / self.direction_count
+        disp_z += water_level
+
+        submerged_mask = disp_z > points[:, 1]  # IsaacLab: Z is up
+
+        return disp_z, submerged_mask
+
+
+    def TMA_spectrum(self, omega, fetch_km, gamma):
+        fetch = 1000.0 * fetch_km
+        alpha = 0.076 * (self.windspeed ** 2 / (self.gravity * fetch)) ** 0.22
+        peak_omega = 22.0 * torch.abs((self.gravity ** 2 / (self.windspeed * fetch))) ** (1.0 / 3.0)
+
+        sigma = torch.where(omega > peak_omega, 0.09, 0.07)
+        exponent = -0.5 * ((omega - peak_omega) / (sigma * peak_omega)) ** 2
+        jonswap_sharp = gamma ** torch.exp(exponent)
+
+        alpha_term = alpha * self.gravity**2 / omega**5
+        beta = 1.25
+        shape_term = torch.exp(-beta * (peak_omega / omega) ** 4)
+        spectrum = jonswap_sharp * alpha_term * shape_term
+
+        omegaH = omega * torch.sqrt(self.waterdepth / self.gravity)
+        omegaH = torch.clamp(omegaH, 0.0, 2.2)
+        phi = torch.where(omegaH <= 1.0,
+                        0.5 * omegaH**2,
+                        1.0 - 0.5 * (2.0 - omegaH)**2)
+
+        return phi * spectrum
