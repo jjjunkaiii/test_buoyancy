@@ -1,0 +1,68 @@
+{
+    "Groundgrid": {
+        "version": 1,
+        "description": "Mesh deformer projecting a given mesh onto the scene ground.",
+        "language": "Python",
+        "metadata": {
+            "uiName": "Ground Grid Deformer"
+        },
+        "state": {
+         "$comment": "The existence of this state section, even if it contains no attributes, means there is internal state that is entirely managed by the node"
+        },
+        "cudaPointers": "cpu",
+        "inputs": {
+            "points": {
+                "type": "pointf[3][]",
+                "description": "input points",
+                "default": [],
+                "memoryType": "cuda",
+                "metadata": {
+                    "uiName": "input points"
+                }
+            },
+            "cameraPos": {
+                "type": "vectorf[3]",
+                "default": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "description": "input camera position",
+                "metadata": {
+                    "uiName": "Camera position"
+                }
+            },
+            "minHeight": {
+                "type": "float",
+                "description": "minimum height for the projection: the viewpoint is clamped to this minimum height from the ground plane.",
+                "default": 0.0,
+                "minimum": 0.0,
+                "maximum": 100000.0,
+                "metadata": {
+                    "uiName": "Minimum height over ground plane"
+                }
+            },
+            "heightBias": {
+                "type": "float",
+                "description": "height of the ground plane",
+                "default": 0.0,
+                "minimum": -1000.0,
+                "maximum": 1000.0,
+                "metadata": {
+                    "uiName": "Ground plane height to project onto"
+                }
+            }
+        },
+        "outputs": {
+            "points": {
+                "type": "pointf[3][]",
+                "description": "output points (must match input point array size)",
+                "default": [],
+                "memoryType": "cuda",
+                "metadata": {
+                    "uiName": "output points"
+                }
+            }
+        }
+    }
+}

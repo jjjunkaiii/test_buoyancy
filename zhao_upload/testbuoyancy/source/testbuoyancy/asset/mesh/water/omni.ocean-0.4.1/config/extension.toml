@@ -1,0 +1,44 @@
+
+[package]
+# Semantic Versioning is used: https://semver.org/
+version = "0.4.1"
+
+# Lists people or organizations that are considered the "authors" of the package.
+authors = ["NVIDIA"]
+
+# The title and description fields are primarly for displaying extension info in UI
+title = "Ocean Deformer"
+description="Omnigraph node modeling ocean waves imposed on a mesh using the Warp language."
+
+# Path (relative to the root) or content of readme markdown file for UI.
+readme  = "docs/README.md"
+
+# URL of the extension source repository.
+repository = ""
+
+# One of categories for UI.
+category = "graph"
+
+# Keywords for the extension
+keywords = ["kit", "omnigraph", "warp", "animation"]
+
+changelog="docs/CHANGELOG.md"
+preview_image = "data/preview.png"
+icon = "data/icon.png"
+
+# Watch the .ogn files for hot reloading (only works for Python files)
+[fswatcher.patterns]
+include = ["*.ogn", "*.py"]
+exclude = ["*Database.py","*/ogn*"]
+
+[dependencies]
+"omni.kit.test" = {}
+"omni.graph.core" = {}
+"omni.graph" = {}
+"omni.graph.tools" = {}
+"omni.warp" = {}
+
+
+# Main python module this extension provides, it will be publicly available as "import omni.ocean".
+[[python.module]]
+name = "omni.ocean"

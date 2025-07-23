@@ -1,0 +1,124 @@
+{
+    "OceanDeformer": {
+        "version": 1,
+        "description": "Mesh deformer modeling ocean waves.",
+        "language": "Python",
+        "metadata": {
+            "uiName": "Ocean Deformer"
+        },
+        "state": {
+         "$comment": "The existence of this state section, even if it contains no attributes, means there is internal state that is entirely managed by the node"
+        },
+        "cudaPointers": "cpu",
+        "inputs": {
+            "points": {
+                "type": "pointf[3][]",
+                "description": "input points",
+                "default": [],
+                "memoryType": "cuda",
+                "metadata": {
+                    "uiName": "input points"
+                }
+            },
+            "scale": {
+                "type": "float",
+                "description": "Horizontal wave scaling, can be used to match scene units.",
+                "default": 1.0,
+                "minimum": 0.001,
+                "maximum": 1000.0,
+                "metadata": {
+                    "uiName": "Horizontal wave scale"
+                }
+            },
+            "waveAmplitude": {
+                "type": "float",
+                "description": "Wave amplitude factor.",
+                "default": 1.0,
+                "minimum": 0.001,
+                "maximum": 1000.0,
+                "metadata": {
+                    "uiName": "Wave amplitude"
+                }
+            },
+            "directionality": {
+                "type": "float",
+                "description": "isotropic vs directional wave motion",
+                "default": 0,
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "metadata": {
+                    "uiName": "directionality"
+                }
+            },
+            "direction": {
+                "type": "float",
+                "description": "wave direction",
+                "default": 0,
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "metadata": {
+                    "uiName": "Direction"
+                }
+            },
+            "windSpeed": {
+                "type": "float",
+                "description": "wind speed (m/s) 10m above ocean (0..30)",
+                "default": 10.0,
+                "minimum": 0.0,
+                "maximum": 30.0,
+                "metadata": {
+                    "uiName": "Wind speed"
+                }
+            },
+            "waterDepth": {
+                "type": "float",
+                "description": "water depth (1..1000 m)",
+                "default": 50.0,
+                "minimum": 1.0,
+                "maximum": 1000.0,
+                "metadata": {
+                    "uiName": "Water depth"
+                }
+            },
+            "time": {
+                "type": "double",
+                "description": "animation time",
+                "default": 0,
+                "metadata": {
+                    "uiName": "Animation time"
+                }
+            },
+            "antiAlias": {
+                "type": "bool",
+                "description": "damp distant waves at grazing view angles to reduce spatial aliasing",
+                "default": false,
+                "metadata": {
+                    "uiName": "Anti aliasing"
+                }
+            },          
+            "cameraPos": {
+                "type": "vectorf[3]",
+                "default": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "description": "input camera position",
+                "metadata": {
+                    "uiName": "Camera position"
+                }
+            }
+        },
+        "outputs": {
+            "points": {
+                "type": "pointf[3][]",
+                "description": "output points (must match input point array size)",
+                "default": [],
+                "memoryType": "cuda",
+                "metadata": {
+                    "uiName": "output points"
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="TUGBOAT.SLDASM">
+  <link
+    name="tugboat">
+    <inertial>
+      <origin
+        xyz="0.0023053 -0.52499 0.25861"
+        rpy="0 0 0" />
+      <mass
+        value="93965" />
+      <inertia
+        ixx="860330"
+        ixy="-8.6671"
+        ixz="0.4075"
+        iyy="142250"
+        iyz="7227.7"
+        izz="937010" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://TUGBOAT.SLDASM/meshes/tugboat.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://TUGBOAT.SLDASM/meshes/tugboat.STL" />
+      </geometry>
+    </collision>
+  </link>
+</robot>
