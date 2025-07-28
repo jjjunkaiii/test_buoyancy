@@ -395,20 +395,20 @@ class OceanDeformer:
         self.gravity = gravity
         # Generate shared random arrays (fixed seed to match Warp)
         np.random.seed(7)
-        # self.rand_arr_profile = torch.tensor(
-        #     np.random.rand(self.profile_data_num), dtype=torch.float32, device=device
-        # )
-        # self.rand_arr_points = torch.tensor(
-        #     np.random.rand(self.direction_count), dtype=torch.float32, device=device
-        # )
         self.rand_arr_profile = torch.tensor(
-            np.load('/home/marmot/isaacsim/exts/omni.ocean-0.4.1/omni/ocean/nodes/rand_arr_profile.npy')
-            , dtype=torch.float32, device=device
+            np.random.rand(self.profile_data_num), dtype=torch.float32, device=device
         )
         self.rand_arr_points = torch.tensor(
-            np.load('/home/marmot/isaacsim/exts/omni.ocean-0.4.1/omni/ocean/nodes/rand_arr_points.npy')
-            , dtype=torch.float32, device=device
+            np.random.rand(self.direction_count), dtype=torch.float32, device=device
         )
+        # self.rand_arr_profile = torch.tensor(
+        #     np.load('/home/marmot/isaacsim/exts/omni.ocean-0.4.1/omni/ocean/nodes/rand_arr_profile.npy')
+        #     , dtype=torch.float32, device=device
+        # )
+        # self.rand_arr_points = torch.tensor(
+        #     np.load('/home/marmot/isaacsim/exts/omni.ocean-0.4.1/omni/ocean/nodes/rand_arr_points.npy')
+        #     , dtype=torch.float32, device=device
+        # )
 
         self.update_attr()
 
