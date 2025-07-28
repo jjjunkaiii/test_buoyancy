@@ -15,13 +15,14 @@ from isaaclab.utils import configclass
 
 import os
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
-# boat_path = "asset/Boat74/Boat74/boat74.usd"
-boat_path = "asset/URDF2/barge.SLDASM/urdf/barge.usd"
 
+barge_path = "asset/mesh/URDF2/barge.SLDASM/urdf/barge.usd"
+tugboat_path = "asset/mesh/URDF3/TUGBOAT.SLDASM/urdf/tugboat.usd"
 
 
 @configclass
 class TestBuoyancyEnvCfg(DirectRLEnvCfg):
+    water_level = 5.0
     # env
     decimation = 2
     episode_length_s = 5.0
@@ -35,10 +36,10 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
 
     # robot(s)
     # robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-    boatCfg = RigidObjectCfg(
+    bargeCfg = RigidObjectCfg(
                 prim_path="/World/envs/env_.*/barge",
                 spawn=sim_utils.UsdFileCfg(
-                    usd_path=os.path.join(extention_path,boat_path),
+                    usd_path=os.path.join(extention_path,barge_path),
                     articulation_props = sim_utils.ArticulationRootPropertiesCfg(
                         articulation_enabled=False,
                     ),
@@ -55,14 +56,63 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
                 init_state=RigidObjectCfg.InitialStateCfg(
                     pos=(0.0, 0.0, 20.0),
                     rot=(-0.7071, 0.7071, 0, 0),
-                    # rot=(-0.7071, 0.2071, 0.33, 0.33), # tilted pose for demo
+                    ),
+                debug_vis = True
+
+    )
+
+    tugCfg1 = RigidObjectCfg(
+                prim_path="/World/envs/env_.*/tugboat1",
+                spawn=sim_utils.UsdFileCfg(
+                    usd_path=os.path.join(extention_path,tugboat_path),
+                    articulation_props = sim_utils.ArticulationRootPropertiesCfg(
+                        articulation_enabled=False,
+                    ),
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                        rigid_body_enabled=True,
+                        max_linear_velocity=1000.0,
+                        max_angular_velocity=1000.0,
+                        linear_damping=2,
+                        angular_damping=3,
+                        enable_gyroscopic_forces=True,
+                        ),
+                    visible = True,
+                ),
+                init_state=RigidObjectCfg.InitialStateCfg(
+                    # pos=(0, 0, 20.0),
+                    pos=(20.0, 20.0, 20.0),
+                    rot=(-0.7071, 0.7071, 0, 0),
+                    ),
+                debug_vis = True
+
+    )
+
+    tugCfg2 = RigidObjectCfg(
+                prim_path="/World/envs/env_.*/tugboat2",
+                spawn=sim_utils.UsdFileCfg(
+                    usd_path=os.path.join(extention_path,tugboat_path),
+                    articulation_props = sim_utils.ArticulationRootPropertiesCfg(
+                        articulation_enabled=False,
+                    ),
+                    rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                        rigid_body_enabled=True,
+                        max_linear_velocity=1000.0,
+                        max_angular_velocity=1000.0,
+                        linear_damping=2,
+                        angular_damping=3,
+                        enable_gyroscopic_forces=True,
+                        ),
+                    visible = True,
+                ),
+                init_state=RigidObjectCfg.InitialStateCfg(
+                    pos=(-20.0, 20.0, 20.0),
+                    rot=(-0.7071, 0.7071, 0, 0),
                     ),
                 debug_vis = True
 
     )
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=4.0, replicate_physics=True)
-    water_level = 5.0
 
     # custom parameters/scales
     # - controllable joint

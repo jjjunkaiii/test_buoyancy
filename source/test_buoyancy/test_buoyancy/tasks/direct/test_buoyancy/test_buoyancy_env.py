@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+# Expand No.1–7 to include more ships.
 
 from __future__ import annotations
 
@@ -41,10 +42,9 @@ python scripts/random_agent.py --task=Template-Test-Buoyancy-Direct-v0
 '''
 
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
-# water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
-# barge_mesh_path = "asset/urdf/boat74/meshes/base_link.STL"
 water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
-barge_mesh_path = "asset/URDF2/barge.SLDASM/meshes/base_link.STL"
+barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/base_link.STL"
+tugboat_mesh_path = "asset/mesh/URDF3/TUGBOAT.SLDASM/meshes/tugboat.STL"
 
 class TestBuoyancyEnv(DirectRLEnv):
     cfg: TestBuoyancyEnvCfg
@@ -53,32 +53,25 @@ class TestBuoyancyEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         # init buoyancy related buffers
-        self.rot_mats = torch.zeros((self.num_envs, 4, 4), device=self.device)
-        self.R = torch.zeros((self.num_envs, 3, 3), device=self.device)
-        self.buoyancy_force_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.buoyancy_force_b = torch.zeros((self.num_envs, 3), device=self.device)
-        self.buoyancy_torque_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.buoyancy_torque_b = torch.zeros((self.num_envs, 3), device=self.device)
-        self.buoyancy_centre_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.buoyancy_centre_b = torch.zeros((self.num_envs, 3), device=self.device)
-        
-        self._load_voxel()
+        # No.1
+        self._init_robot_buffers("barge")
+        self._init_robot_buffers("tugboat1")
+        self._init_robot_buffers("tugboat2")
+
+        # No.2
+        self._load_voxel(mesh_path=barge_mesh_path, suffix="barge")
+        self._load_voxel(mesh_path=tugboat_mesh_path, suffix="tugboat1")
+        self._load_voxel(mesh_path=tugboat_mesh_path, suffix="tugboat2")
+
 
         self.debug_visualisation = True
+        # No.3
         if self.debug_visualisation:
-            self._define_markers()
+            self._define_markers("barge")
+            self._define_markers("tugboat1")
+            self._define_markers("tugboat2")
 
         self.oceandeformer = OceanDeformer(device=self.device)
-
-        self.start_time = time.process_time()
-
-        # x = self.debug_attr_data[:, 0]
-        # y = self.debug_attr_data[:, 2]
-        # plt.figure(figsize=(15, 15))
-        # plt.scatter(x, y, s=1, alpha=0.3)
-        # plt.title("Deformed Grid")
-        # plt.show()
-
         # time.sleep(10) # TODO:remove in the future
 
         # self._cart_dof_idx, _ = self.robot.find_joints(self.cfg.cart_dof_name)
@@ -86,19 +79,34 @@ class TestBuoyancyEnv(DirectRLEnv):
 
         # self.joint_pos = self.robot.data.joint_pos
         # self.joint_vel = self.robot.data.joint_vel
+    
+    def _init_robot_buffers(self, suffix: str): 
+        setattr(self, f"rot_mats_{suffix}", torch.zeros((self.num_envs, 4, 4), device=self.device))
+        setattr(self, f"R_{suffix}", torch.zeros((self.num_envs, 3, 3), device=self.device))
+        setattr(self, f"buoyancy_force_w_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"buoyancy_force_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"buoyancy_torque_w_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"buoyancy_torque_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"buoyancy_centre_w_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"buoyancy_centre_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+
 
     def _setup_scene(self):
-        self.robot = RigidObject(self.cfg.boatCfg)
+        # No.4
+        self.barge = RigidObject(self.cfg.bargeCfg)
+        self.tugboat1 = RigidObject(self.cfg.tugCfg1)
+        self.tugboat2 = RigidObject(self.cfg.tugCfg2)
+
         water_surface_cfg = RigidObjectCfg(
             prim_path="/World/water_surface",
             spawn=sim_utils.UsdFileCfg(
                 usd_path=os.path.join(extention_path, water_path),
                 visual_material=PreviewSurfaceCfg(
-                    diffuse_color=(0.05, 0.15, 0.4),
-                    emissive_color=(0.0, 0.0, 0.0),
-                    roughness=0.05,
-                    metallic=0.0,
-                    opacity=0.9,
+                    diffuse_color=(0.02, 0.08, 0.25), 
+                    emissive_color=(0.0, 0.0, 0.0),   
+                    roughness=0.1,                    
+                    metallic=0.0,                     
+                    opacity=0.9                       
                 ),
                 rigid_props=None,
                 collision_props=None,
@@ -116,15 +124,24 @@ class TestBuoyancyEnv(DirectRLEnv):
         # we need to explicitly filter collisions for CPU simulation
         if self.device == "cpu":
             self.scene.filter_collisions(global_prim_paths=[])
-        # add articulation to scene
-        self.scene.rigid_objects["boat74"] = self.robot
+
+        # # No.5
+        self.scene.rigid_objects["barge"] = self.barge
+        self.scene.rigid_objects["tugboat1"] = self.tugboat1
+        self.scene.rigid_objects["tugboat2"] = self.tugboat2
+
+
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=800.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
-        self.apply_buoyancy()
+        # No.6
+        self.apply_buoyancy(suffix="barge")
+        self.apply_buoyancy(suffix="tugboat1")
+        self.apply_buoyancy(suffix="tugboat2")
+
 
     def _apply_action(self) -> None:
         # self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
@@ -196,88 +213,151 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def step(self, action):
         super().step(action)
+        # No.7
         if self.debug_visualisation:
-            self._visualise_markers()
+            self._visualise_markers("barge")
+            self._visualise_markers("tugboat1")
+            self._visualise_markers("tugboat2")
 
 
 # ----------- buoyancy related functions -----------
-    def _load_voxel(self):
-        voxel_res = 64
-        mesh = trimesh.load(os.path.join(extention_path,barge_mesh_path))
+    def _load_voxel(self, mesh_path: str, suffix: str):
+        voxel_res = 32
+        mesh = trimesh.load(os.path.join(extention_path, mesh_path))
         bounds = mesh.bounds
         min_bound, max_bound = bounds[0], bounds[1]
         interval = (max_bound - min_bound) / voxel_res
+
         xs = np.arange(min_bound[0], max_bound[0], interval[0])
         ys = np.arange(min_bound[1], max_bound[1], interval[1])
         zs = np.arange(min_bound[2], max_bound[2], interval[2])
+
         xv, yv, zv = np.meshgrid(xs, ys, zs, indexing='ij')
+
         voxel_centers = np.vstack([xv.ravel(), yv.ravel(), zv.ravel()]).T
         t_start = time.time()
+
         inside_mask = mesh.contains(voxel_centers)
         t_end = time.time()
-        print("Mask generated, time used: ", t_end-t_start)
+
+        print(f"[{suffix}] Mask generated, time used: {t_end - t_start:.4f} sec")
 
         valid_voxels = voxel_centers[inside_mask]
+
         voxel_volume = interval[0] * interval[1] * interval[2]
 
-        self.voxel_l = interval[0]
-        self.voxel_w = interval[1]
-        self.voxel_h = interval[2]
-        self.inside_mask = torch.tensor(inside_mask, dtype=torch.bool, device=self.device)
-        self.valid_voxels = torch.tensor(valid_voxels, dtype=torch.float32, device=self.device)
-        self.voxel_volume = torch.tensor(voxel_volume, dtype=torch.float32, device=self.device) # only displays the approximated value, torch will use the precise value for calculation
-        self.voxel_pos_w = torch.zeros(self.num_envs, self.valid_voxels.shape[0], self.valid_voxels.shape[1], dtype=torch.float32, device=self.device)      
-        self.voxel_submerged_flag = torch.zeros(self.num_envs, self.valid_voxels.shape[0], 1, dtype=torch.int, device=self.device)
+        setattr(self, f"voxel_l_{suffix}", interval[0])
+        setattr(self, f"voxel_w_{suffix}", interval[1])
+        setattr(self, f"voxel_h_{suffix}", interval[2])
 
-    def get_pose_mat(self):
-        rigid_body_states = self.robot.data.root_link_pose_w
-        for i in range(self.num_envs):
-            self.R[i] = matrix_from_quat(rigid_body_states[i][3:7])
-            self.rot_mats[i][:3, :3] = self.R[i]
-            self.rot_mats[i][:3, 3] = (rigid_body_states[i][:3]).T
-            self.rot_mats[i][3, 3] = 1.0
+        setattr(self, f"inside_mask_{suffix}", torch.tensor(inside_mask, dtype=torch.bool, device=self.device))
+
+        setattr(self, f"valid_voxels_{suffix}", torch.tensor(valid_voxels, dtype=torch.float32, device=self.device))
+         # only displays the approximated value, torch will use the precise value for calculation
+        setattr(self, f"voxel_volume_{suffix}", torch.tensor(voxel_volume, dtype=torch.float32, device=self.device))
+
+        voxel_pos_w = torch.zeros((self.num_envs, valid_voxels.shape[0], 3), dtype=torch.float32, device=self.device)
+        setattr(self, f"voxel_pos_w_{suffix}", voxel_pos_w)
+
+        setattr(self, f"submerged_mask_{suffix}", torch.zeros((self.num_envs, valid_voxels.shape[0]), dtype=torch.bool))
+     
+
+    def get_pose_mat(self, suffix: str):
+
+        robot = getattr(self, suffix)
+        rigid_body_states = robot.data.root_link_pose_w 
+        rot_mats = getattr(self, f"rot_mats_{suffix}")
+        R = getattr(self, f"R_{suffix}")
         
-    def get_voxel_pos_w(self):
-        # Get the position of each voxel in world coordinates
-        self.get_pose_mat()
         for i in range(self.num_envs):
-            self.voxel_pos_w[i] = (self.rot_mats[i][:3, :3] @ self.valid_voxels.T + self.rot_mats[i][:3, 3].unsqueeze(1)).T
-    
-    def apply_buoyancy(self, water_density=1500.0):
+
+            R[i] = matrix_from_quat(rigid_body_states[i][3:7])
+
+            rot_mats[i][:3, :3] = R[i]
+
+            rot_mats[i][:3, 3] = rigid_body_states[i][:3].T
+
+            rot_mats[i][3, 3] = 1.0
+        
+    def get_voxel_pos_w(self,suffix: str):
+
+        self.get_pose_mat(suffix=suffix)
+        rot_mats = getattr(self, f"rot_mats_{suffix}")
+        valid_voxels = getattr(self, f"valid_voxels_{suffix}")
+        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
+        for i in range(self.num_envs):
+            voxel_pos_w[i] = (rot_mats[i][:3, :3] @ valid_voxels.T + rot_mats[i][:3, 3].unsqueeze(1)).T
+
+    def apply_buoyancy(self, water_level=0.0, water_density=1500.0, suffix: str = "barge"):
         """
         Apply buoyancy force to the rigid object based on the voxel positions and water level.
         """
-        self.get_voxel_pos_w()
+        self.get_voxel_pos_w(suffix=suffix)
+
+        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
+        voxel_volume = getattr(self, f"voxel_volume_{suffix}")
+        buoyancy_force_w = getattr(self, f"buoyancy_force_w_{suffix}")
+        buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")
+        buoyancy_force_b = getattr(self, f"buoyancy_force_b_{suffix}")
+        buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")
+        robot = getattr(self, suffix)
         
         # Calculate the buoyancy force for each voxel
-        
+        mask = getattr(self, f"submerged_mask_{suffix}")
+
         for i in range(self.num_envs):
-            water_height, self.submerged_mask = self.oceandeformer.compute(self.voxel_pos_w[i], self.cfg.water_level)
-            submerged_voxels = self.voxel_pos_w[i][self.submerged_mask]
+            water_height, submerged_mask = self.oceandeformer.compute(voxel_pos_w[i], self.cfg.water_level)
+
+            mask[i] = submerged_mask
+
+            submerged_voxels = voxel_pos_w[i][submerged_mask]
             num_submerged_voxels = submerged_voxels.shape[0] #TODO: pre-allocate memory to speed up in the future
             if num_submerged_voxels != 0:
-                submerged_volume = num_submerged_voxels * self.voxel_volume.item()
-                self.buoyancy_force_w[i, 2] = submerged_volume * water_density * 9.81
-                self.buoyancy_centre_w[i] = submerged_voxels.mean(dim=0)
-                self.calculate_buoyancy_wrench(i)
-                self.robot.set_external_force_and_torque(forces=self.buoyancy_force_b[i],torques=-self.buoyancy_torque_b[i],env_ids=i)
+
+                submerged_volume = num_submerged_voxels * voxel_volume.item()
+
+                buoyancy_force_w[i, 2] = submerged_volume * water_density * 9.81
+
+                buoyancy_centre_w[i] = submerged_voxels.mean(dim=0)
+
+                self.calculate_buoyancy_wrench(i, suffix=suffix)
+
+                robot.set_external_force_and_torque(forces=buoyancy_force_b[i], torques=-buoyancy_torque_b[i], env_ids=i)
             else:
-                self.robot.set_external_force_and_torque(forces=torch.zeros(3),torques=torch.zeros(3),env_ids=i)
-                
-    def calculate_buoyancy_wrench(self, env):
-        c_m_w = self.robot.data.body_com_pos_w[env][0]
-        c_b_w = self.buoyancy_centre_w[env]
+
+                robot.set_external_force_and_torque(forces=torch.zeros(3), torques=torch.zeros(3), env_ids=i)
+
+    def calculate_buoyancy_wrench(self, env, suffix: str):
+        robot = getattr(self, suffix)
+        R = getattr(self, f"R_{suffix}")
+        buoyancy_force_w = getattr(self, f"buoyancy_force_w_{suffix}")
+        buoyancy_force_b = getattr(self, f"buoyancy_force_b_{suffix}")
+        buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")
+        buoyancy_torque_w = getattr(self, f"buoyancy_torque_w_{suffix}")
+        buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")
+
+        c_m_w = robot.data.body_com_pos_w[env][0]
+
+        c_b_w = buoyancy_centre_w[env]
+
         c_delta_w = c_m_w - c_b_w
-        self.buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, self.buoyancy_force_w[env])
-        self.buoyancy_force_b[env] = torch.matmul(self.R[env].T, self.buoyancy_force_w[env])
-        self.buoyancy_torque_b[env] = torch.matmul(self.R[env].T, self.buoyancy_torque_w[env])
+
+        buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, buoyancy_force_w[env])
+
+        buoyancy_force_b[env] = torch.matmul(R[env].T, buoyancy_force_w[env])
+
+        buoyancy_torque_b[env] = torch.matmul(R[env].T, buoyancy_torque_w[env])
 
 # ----------- debug visualisations -----------
-    def _define_markers(self) -> VisualizationMarkers:
+    def _define_markers(self, suffix: str) -> VisualizationMarkers:
         """Define markers with various different shapes."""
         from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+        voxel_l = getattr(self, f"voxel_l_{suffix}")
+        voxel_w = getattr(self, f"voxel_w_{suffix}")
+        voxel_h = getattr(self, f"voxel_h_{suffix}")
+
         marker_cfg = VisualizationMarkersCfg(
-            prim_path="/Markers",
+            prim_path=f"/Markers_{suffix}",
             markers={
                 # "frame": sim_utils.UsdFileCfg(
                 #     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
@@ -289,12 +369,12 @@ class TestBuoyancyEnv(DirectRLEnv):
                 #     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
                 # ),
                 "cube_red": sim_utils.CuboidCfg(
-                size=(self.voxel_l*0.8, self.voxel_w*0.8, self.voxel_h*0.8),
+                size=(voxel_l*0.8, voxel_w*0.8, voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0),),
                 visible=False,
                 ),
                 "cube_blue": sim_utils.CuboidCfg(
-                size=(self.voxel_l*0.8, self.voxel_w*0.8, self.voxel_h*0.8),
+                size=(voxel_l*0.8, voxel_w*0.8, voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
                 visible=False,
                 ),
@@ -311,53 +391,77 @@ class TestBuoyancyEnv(DirectRLEnv):
 
             },
         )
-        self.marker = VisualizationMarkers(marker_cfg)
+        setattr(self, f"marker_{suffix}", VisualizationMarkers(marker_cfg))
+        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
+        num_voxels = voxel_pos_w.shape[1]
+        setattr(self, f"marker_indices_{suffix}", torch.zeros(num_voxels, dtype=torch.float32, device=self.device))
+        setattr(self, f"marker_translations_{suffix}", torch.zeros(num_voxels, 3, dtype=torch.float32, device=self.device))
+        setattr(self, f"marker_orientations_{suffix}", torch.zeros(num_voxels, 4, dtype=torch.float32, device=self.device))
 
-        self.marker_indices = torch.zeros(self.voxel_pos_w.shape[1]+3, dtype=torch.float32, device=self.device)
-        self.marker_translations = torch.zeros(self.voxel_pos_w.shape[1]+3, 3, dtype=torch.float32, device=self.device)
-        self.marker_orientations = torch.zeros(self.voxel_pos_w.shape[1]+3, 4, dtype=torch.float32, device=self.device)
 
-    def _visualise_markers(self):
-        rigid_body_states = self.robot.data.root_link_pose_w
-        # mask = self.voxel_pos_w[0, :, 2] < self.cfg.water_level
-        self.marker_indices[:self.voxel_pos_w.shape[1]] = self.submerged_mask
-        self.marker_translations[:self.voxel_pos_w.shape[1]] = self.voxel_pos_w[0]
-        self.marker_orientations[:self.voxel_pos_w.shape[1]] = rigid_body_states[0][3:7]
+    def _visualise_markers(self, suffix: str):
+        robot = getattr(self, suffix)
+        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
+        marker = getattr(self, f"marker_{suffix}")
+        marker_indices = getattr(self, f"marker_indices_{suffix}")
+        marker_translations = getattr(self, f"marker_translations_{suffix}")
+        marker_orientations = getattr(self, f"marker_orientations_{suffix}")
+        mask_all = getattr(self, f"submerged_mask_{suffix}")
+        rigid_body_states = robot.data.root_link_pose_w
 
-        # water related markers
-        self.water_surface_target_pos = torch.tensor([[50,0,0],
-                                                      [0,50,0],
-                                                      [-50,0,0],
-                                                      [0,-50,0],
-                                                      [25,0,0],
-                                                      [0,25,0],
-                                                      [-25,0,0],
-                                                      [0,-25,0],
-                                                      [35.35/2,35.35/2,0],
-                                                      [-35.35/2,35.35/2,0],
-                                                      [35.35/2,-35.35/2,0],
-                                                      [-35.35/2,-35.35/2,0],
-                                                      [0,0,0],], device=self.device)
-        # sample_point = np.array([  [ -25.22   ,    0.     , -499.365  ],
-        #                         [ 242.335  ,    0.     , -347.63   ],
-        #                         [ 207.19499,    0.     , -251.9    ],
-        #                         [ 287.47498,    0.     , -168.3    ],
-        #                         [-253.91998,    0.     ,  -88.265  ],
-        #                         [  25.425  ,    0.     ,  -11.29   ],
-        #                         [ 170.26999,    0.     ,   64.31   ],
-        #                         [ 109.64   ,    0.     ,  142.92   ],
-        #                         [ 136.72   ,    0.     ,  224.76999],
-        #                         [-248.455  ,    0.     ,  316.755  ],
-        #                         [  66.65   ,    0.     ,  431.295  ]], dtype=np.float32)
-        # sample_point = sample_point[:, [0,2,1]]
-        # self.water_surface_target_pos = torch.tensor(sample_point, device=self.device)
-        self.marker_indices[-13:] = torch.full((13,), 2, device=self.device)
-        self.marker_translations[-13:] = self.water_surface_target_pos
-        disp, _ = self.oceandeformer.compute(self.water_surface_target_pos, self.cfg.water_level)
-        self.marker_translations[-13:, 2] = disp
-        self.marker_orientations[-13:] = torch.tensor([0.7071,0,-0.7071,0], device=self.device).repeat(13,1)
+        # mask = voxel_pos_w[0, :, 2] < 5.0# TODO
+        mask = mask_all[0]
 
-        self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)  
+
+        marker_indices[:] = mask.int()
+
+        marker_translations[:] = voxel_pos_w[0]
+
+        marker_orientations[:] = rigid_body_states[0][3:7]
+
+        marker.visualize(translations=marker_translations, orientations=marker_orientations, marker_indices=marker_indices)  
+
+    # def _visualise_markers(self):
+    #     rigid_body_states = self.robot.data.root_link_pose_w
+    #     # mask = self.voxel_pos_w[0, :, 2] < self.cfg.water_level
+    #     self.marker_indices[:self.voxel_pos_w.shape[1]] = self.submerged_mask
+    #     self.marker_translations[:self.voxel_pos_w.shape[1]] = self.voxel_pos_w[0]
+    #     self.marker_orientations[:self.voxel_pos_w.shape[1]] = rigid_body_states[0][3:7]
+
+    #     # water related markers
+    #     self.water_surface_target_pos = torch.tensor([[50,0,0],
+    #                                                   [0,50,0],
+    #                                                   [-50,0,0],
+    #                                                   [0,-50,0],
+    #                                                   [25,0,0],
+    #                                                   [0,25,0],
+    #                                                   [-25,0,0],
+    #                                                   [0,-25,0],
+    #                                                   [35.35/2,35.35/2,0],
+    #                                                   [-35.35/2,35.35/2,0],
+    #                                                   [35.35/2,-35.35/2,0],
+    #                                                   [-35.35/2,-35.35/2,0],
+    #                                                   [0,0,0],], device=self.device)
+    #     # sample_point = np.array([  [ -25.22   ,    0.     , -499.365  ],
+    #     #                         [ 242.335  ,    0.     , -347.63   ],
+    #     #                         [ 207.19499,    0.     , -251.9    ],
+    #     #                         [ 287.47498,    0.     , -168.3    ],
+    #     #                         [-253.91998,    0.     ,  -88.265  ],
+    #     #                         [  25.425  ,    0.     ,  -11.29   ],
+    #     #                         [ 170.26999,    0.     ,   64.31   ],
+    #     #                         [ 109.64   ,    0.     ,  142.92   ],
+    #     #                         [ 136.72   ,    0.     ,  224.76999],
+    #     #                         [-248.455  ,    0.     ,  316.755  ],
+    #     #                         [  66.65   ,    0.     ,  431.295  ]], dtype=np.float32)
+    #     # sample_point = sample_point[:, [0,2,1]]
+    #     # self.water_surface_target_pos = torch.tensor(sample_point, device=self.device)
+    #     self.marker_indices[-13:] = torch.full((13,), 2, device=self.device)
+    #     self.marker_translations[-13:] = self.water_surface_target_pos
+    #     disp, _ = self.oceandeformer.compute(self.water_surface_target_pos, self.cfg.water_level)
+    #     self.marker_translations[-13:, 2] = disp
+    #     self.marker_orientations[-13:] = torch.tensor([0.7071,0,-0.7071,0], device=self.device).repeat(13,1)
+
+    #     self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)  
 
 
 
@@ -415,7 +519,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float32, device=self.device)
 
     def update_attr(self):
-        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.5)
+        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.2)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
@@ -510,7 +614,7 @@ class OceanDeformer:
         dir_x = torch.cos(r)
         dir_y = torch.sin(r)
 
-        points_xy = torch.stack([points[:, 0], -points[:, 1]], dim=1).float()  # TODO investigate why y is inversed
+        points_xy = torch.stack([points[:, 0], -points[:, 1]], dim=1).float()
         dirs = torch.stack([dir_x, dir_y], dim=1)  # shape: (D, 2)
         dots = torch.matmul(points_xy, dirs.T)     # shape: (N, D)
 
