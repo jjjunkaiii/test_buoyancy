@@ -43,7 +43,7 @@ python scripts/random_agent.py --task=Template-Test-Buoyancy-Direct-v0
 
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
 water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
-barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/base_link.STL"
+barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/barge.STL"
 tugboat_mesh_path = "asset/mesh/URDF3/TUGBOAT.SLDASM/meshes/tugboat.STL"
 
 class TestBuoyancyEnv(DirectRLEnv):
@@ -222,7 +222,7 @@ class TestBuoyancyEnv(DirectRLEnv):
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self, mesh_path: str, suffix: str):
-        voxel_res = 32
+        voxel_res = 64
         mesh = trimesh.load(os.path.join(extention_path, mesh_path))
         bounds = mesh.bounds
         min_bound, max_bound = bounds[0], bounds[1]
@@ -497,29 +497,15 @@ class OceanDeformer:
         self.device = device
         self.profile_extent = 410.0
         self.gravity = gravity
-        # Generate shared random arrays (fixed seed to match Warp)
-        np.random.seed(7)
-        self.rand_arr_profile = torch.tensor(
-            np.random.rand(self.profile_data_num), dtype=torch.float32, device=device
-        )
-        self.rand_arr_points = torch.tensor(
-            np.random.rand(self.direction_count), dtype=torch.float32, device=device
-        )
-        # self.rand_arr_profile = torch.tensor(
-        #     np.load('/home/marmot/isaacsim/exts/omni.ocean-0.4.1/omni/ocean/nodes/rand_arr_profile.npy')
-        #     , dtype=torch.float32, device=device
-        # )
-        # self.rand_arr_points = torch.tensor(
-        #     np.load('/home/marmot/isaacsim/exts/omni.ocean-0.4.1/omni/ocean/nodes/rand_arr_points.npy')
-        #     , dtype=torch.float32, device=device
-        # )
+        # init attributes
+        self.init_attr()
+        # init variables
+        self.init_variables()
 
-        self.update_attr()
+        self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
-        self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float32, device=self.device)
-
-    def update_attr(self):
-        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.2)
+    def init_attr(self):
+        self.node.get_attribute("inputs:waveAmplitude").set(1.0)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
@@ -531,23 +517,73 @@ class OceanDeformer:
         self.inputs_windSpeed = self.node.get_attribute("inputs:windSpeed").get()
 
         # process info (torch tensors)
-        self.amplitude = torch.clamp(torch.tensor(float(self.inputs_waveAmplitude), device=self.device), 0.0001, 1000.0)
+        self.amplitude = torch.clamp(torch.tensor(float(self.inputs_waveAmplitude), device=self.device, dtype=torch.float64), 0.0001, 1000.0)
         self.minWavelength = 0.1
         self.maxWavelength = 250.0
-        self.direction = torch.tensor(float(self.inputs_direction) % (2 * np.pi), device=self.device)
-        self.directionality = torch.clamp(torch.tensor(0.02 * float(self.inputs_directionality), device=self.device), 0.0, 1.0)
-        self.windspeed = torch.clamp(torch.tensor(float(self.inputs_windSpeed), device=self.device), 0.0, 30.0)
-        self.waterdepth = torch.clamp(torch.tensor(float(self.inputs_waterDepth), device=self.device), 1.0, 1000.0)
-        self.scale = torch.clamp(torch.tensor(float(self.inputs_scale), device=self.device), 0.001, 10000.0)
+        self.direction = torch.tensor(float(self.inputs_direction) % (2 * np.pi), device=self.device, dtype=torch.float64)
+        self.directionality = torch.clamp(torch.tensor(0.02 * float(self.inputs_directionality), device=self.device, dtype=torch.float64), 0.0, 1.0)
+        self.windspeed = torch.clamp(torch.tensor(float(self.inputs_windSpeed), device=self.device, dtype=torch.float64), 0.0, 30.0)
+        self.waterdepth = torch.clamp(torch.tensor(float(self.inputs_waterDepth), device=self.device, dtype=torch.float64), 1.0, 1000.0)
+        self.scale = torch.clamp(torch.tensor(float(self.inputs_scale), device=self.device, dtype=torch.float16), 0.001, 10000.0)
         self.antiAlias = int(bool(self.inputs_antiAlias))
-        self.campos = torch.tensor(self.inputs_cameraPos, device=self.device, dtype=torch.float32)
+        self.campos = torch.tensor(self.inputs_cameraPos, device=self.device, dtype=torch.float64)
 
         # update time attribute
         self.update_time_attr()
-
+    
+    @torch.no_grad()
     def update_time_attr(self):
         self.inputs_time = self.node.get_attribute("inputs:time").get()
-        self.time = torch.tensor(float(self.inputs_time), device=self.device)
+        self.time = torch.tensor(float(self.inputs_time), device=self.device, dtype=torch.float16)
+
+    def init_variables(self):
+        # Generate shared random arrays (fixed seed to match Warp)
+        np.random.seed(7)
+        self.rand_arr_profile = torch.tensor(
+            np.random.rand(self.profile_data_num), dtype=torch.float16, device=self.device
+        )
+        self.rand_arr_points = torch.tensor(
+            np.random.rand(self.direction_count), dtype=torch.float16, device=self.device
+        )        
+        # Compute omega range
+        omega0 = np.sqrt(2.0 * np.pi * self.gravity / self.minWavelength)
+        omega1 = np.sqrt(2.0 * np.pi * self.gravity / self.maxWavelength)
+        self.omega = omega0 + (omega1 - omega0) * torch.arange(self.profile_data_num, device=self.device, dtype=torch.float64) / self.profile_data_num
+        self.omega_delta = (omega1 - omega0) / self.profile_data_num
+        self.k = self.omega ** 2 / self.gravity   
+        self.amp = 10000.0 * torch.sqrt(torch.abs(2.0 * self.omega_delta * self.TMA_spectrum(self.omega, 100.0, 3.3)))
+        # Spatial sample positions
+        self.x_idx = torch.arange(self.profile_res, device=self.device, dtype=torch.float64)
+        self.space_pos = self.profile_extent * self.x_idx / self.profile_res  # (res,)
+        # Blending coefficients
+        s = self.x_idx / self.profile_res  # (res,)
+        self.c1 = 2.0 * s**3 - 3.0 * s**2 + 1.0
+        self.c2 = -2.0 * s**3 + 3.0 * s**2
+        # Directions
+        d = torch.arange(self.direction_count, device=self.device, dtype=torch.float64)
+        r = d * 2.0 * np.pi / self.direction_count + 0.02
+        dir_x = torch.cos(r)
+        dir_y = torch.sin(r)
+        self.dirs = torch.stack([dir_x, dir_y], dim=1)  # shape: (D, 2)
+        # Dirctional amplitude
+        direction_exp = self.direction.unsqueeze(-1)  # shape: (D, 1)
+        r_exp = r.unsqueeze(0)                        # shape: (1, D)
+        t = torch.abs(direction_exp - r_exp)
+        t = torch.where(t > np.pi, 2 * np.pi - t, t)
+        t = t ** 1.2
+        directionality_exp = self.directionality.unsqueeze(-1)  # shape: (D, 1)
+        dir_amp = (2 * t**3 - 3 * t**2 + 1) + (-2 * t**3 + 3 * t**2) * (1.0 - directionality_exp)
+        self.dir_amp = dir_amp / (1.0 + 10.0 * directionality_exp)
+
+        # reduce bits
+        self.omega = self.omega.to(torch.float16)
+        self.k = self.k.to(torch.float16)
+        self.amp = self.amp.to(torch.float16)
+        self.c1 = self.c1.to(torch.float16)
+        self.c2 = self.c2.to(torch.float16)
+        self.dirs = self.dirs.to(torch.float16)
+        self.dir_amp = self.dir_amp.to(torch.float16)
+        self.space_pos = self.space_pos.to(torch.float16)
 
     def compute(self, points, water_level):
         time1 = time.time()
@@ -558,33 +594,21 @@ class OceanDeformer:
         time3 = time.time()
         disp, mask = self.update_points(points, water_level)
         time4 = time.time()
-
+        # print num points
+        print(f"Number of points: {points.shape[0]}")
         print("time for update_time", time2-time1)
         print("time for update_profile", time3-time2)
         print("time for update_points", time4-time3)
 
         return disp, mask
-
+    
+    @torch.no_grad()
     def update_profile(self):
-        # Compute omega range
-        # print(self.profile_res, self.profile_data_num, self.minWavelength, self.maxWavelength, self.profile_extent, self.time, self.windspeed, self.waterdepth)
-
-        omega0 = np.sqrt(2.0 * np.pi * self.gravity / self.minWavelength)
-        omega1 = np.sqrt(2.0 * np.pi * self.gravity / self.maxWavelength)
-        omega = omega0 + (omega1 - omega0) * torch.arange(self.profile_data_num, device=self.device) / self.profile_data_num
-        omega_delta = (omega1 - omega0) / self.profile_data_num
-
-        # Spatial sample positions
-        x_idx = torch.arange(self.profile_res, device=self.device)
-        space_pos = self.profile_extent * x_idx / self.profile_res  # (res,)
-
-        # Wavenumber and phase
-        k = omega ** 2 / self.gravity                     # (N,)
-        phase = -self.time * omega + self.rand_arr_profile * 2.0 * np.pi  # (N,)
-
+        # Wavenumber and phase            # (N,)
+        phase = -self.time * self.omega + self.rand_arr_profile * 2.0 * np.pi  # (N,)
         # Amplitudes from spectrum
-        amp = 10000.0 * torch.sqrt(torch.abs(2.0 * omega_delta * self.TMA_spectrum(omega, 100.0, 3.3)))  # (N,)
-
+        amp = self.amp
+        k = self.k    
         # Helper to compute displacement at given spatial position
         def compute_disp_at(pos):  # pos: (res,)
             angle = k.unsqueeze(1) * pos.unsqueeze(0) + phase.unsqueeze(1)  # (N, res)
@@ -595,33 +619,23 @@ class OceanDeformer:
             return torch.stack([disp_x, disp_y, torch.zeros_like(disp_x)], dim=1) / self.profile_data_num  # (res, 3)
 
         # Compute displacements at three spatial positions
-        disp1 = compute_disp_at(space_pos)                          # space_pos_1
-        disp2 = compute_disp_at(space_pos + self.profile_extent)    # space_pos_2
-        disp3 = compute_disp_at(space_pos - self.profile_extent)    # space_pos_3
-
-        # Blending coefficients
-        s = x_idx / self.profile_res  # (res,)
-        c1 = 2.0 * s**3 - 3.0 * s**2 + 1.0
-        c2 = -2.0 * s**3 + 3.0 * s**2
+        disp1 = compute_disp_at(self.space_pos)                          # space_pos_1
+        disp2 = compute_disp_at(self.space_pos + self.profile_extent)    # space_pos_2
+        disp3 = compute_disp_at(self.space_pos - self.profile_extent)    # space_pos_3
 
         # Final profile
-        self.profile = disp1 + c1.unsqueeze(1) * disp2 + c2.unsqueeze(1) * disp3  # (res, 3)
+        self.profile = disp1 + self.c1.unsqueeze(1) * disp2 + self.c2.unsqueeze(1) * disp3  # (res, 3)
 
+    @torch.no_grad()
     def update_points(self, points, water_level=0.0):
-
-        d = torch.arange(self.direction_count, device=self.device, dtype=torch.float32)
-        r = d * 2.0 * np.pi / self.direction_count + 0.02
-        dir_x = torch.cos(r)
-        dir_y = torch.sin(r)
-
-        points_xy = torch.stack([points[:, 0], -points[:, 1]], dim=1).float()
-        dirs = torch.stack([dir_x, dir_y], dim=1)  # shape: (D, 2)
-        dots = torch.matmul(points_xy, dirs.T)     # shape: (N, D)
+        points_xy = torch.stack([points[:, 0], -points[:, 1]], dim=1).to(torch.float16)
+        dots = torch.matmul(points_xy, self.dirs.mT)     # shape: (N, D)
 
         x_proj = dots / (self.profile_extent * self.scale) + self.rand_arr_points  # shape: (N, D)
         x_scaled = x_proj * self.profile_res
 
-        pos0_raw = torch.floor(x_scaled).long()
+        # pos0_raw = torch.floor(x_scaled).long()
+        pos0_raw = x_scaled.to(torch.int)
         pos0 = pos0_raw.clone()
         pos0[pos0_raw < 0] = pos0[pos0_raw < 0] + self.profile_res - 1
         pos0 = pos0.remainder(self.profile_res)
@@ -631,24 +645,7 @@ class OceanDeformer:
         p0 = self.profile[pos0, 1]                # (N, D)
         p1 = self.profile[pos1, 1]                # (N, D)
 
-        direction_exp = self.direction.unsqueeze(-1)  # shape: (D, 1)
-        r_exp = r.unsqueeze(0)                        # shape: (1, D)
-        t = torch.abs(direction_exp - r_exp)
-        t = torch.where(t > np.pi, 2 * np.pi - t, t)
-        t = t ** 1.2
-
-        directionality_exp = self.directionality.unsqueeze(-1)  # shape: (D, 1)
-        dir_amp = (2 * t**3 - 3 * t**2 + 1) + (-2 * t**3 + 3 * t**2) * (1.0 - directionality_exp)
-        dir_amp = dir_amp / (1.0 + 10.0 * directionality_exp)
-
-        # dir_amp_diag = torch.diagonal(dir_amp, 0)  # shape: (D,)
-
-        # prof_height = dir_amp_diag.unsqueeze(0) * ((1.0 - w) * p0 + w * p1)  # shape: (N, D)
-        
-        # disp_z = torch.sum(dir_y.unsqueeze(0) * prof_height, dim=1)         # shape: (N,)
-
-        disp_z = torch.matmul(((1.0 - w) * p0 + w * p1), dir_amp.mT).squeeze(1)  # shape: (N,)
-
+        disp_z = torch.matmul(((1.0 - w) * p0 + w * p1), self.dir_amp.mT).squeeze(1)  # shape: (N,)
         disp_z = self.amplitude * disp_z / self.direction_count
         disp_z += water_level
 
