@@ -43,7 +43,7 @@ python scripts/random_agent.py --task=Template-Test-Buoyancy-Direct-v0
 
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
 water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
-barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/base_link.STL"
+barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/barge.STL"
 tugboat_mesh_path = "asset/mesh/URDF3/TUGBOAT.SLDASM/meshes/tugboat.STL"
 
 class TestBuoyancyEnv(DirectRLEnv):
@@ -301,7 +301,7 @@ class TestBuoyancyEnv(DirectRLEnv):
         for i in range(self.num_envs):
             voxel_pos_w[i] = (rot_mats[i][:3, :3] @ valid_voxels.T + rot_mats[i][:3, 3].unsqueeze(1)).T
 
-    def apply_buoyancy(self, water_level=0.0, water_density=1500.0, suffix: str = "barge"):
+    def apply_buoyancy(self, water_level=0.0, water_density=1025.0, suffix: str = "barge"):
         """
         Apply buoyancy force to the rigid object based on the voxel positions and water level.
         """
@@ -494,24 +494,62 @@ class TestBuoyancyEnv(DirectRLEnv):
     #     self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)  
 
 # ----------- teleoperation -----------
-    def read_teleop_force_and_torque(self, fx, fy, tz, suffix):
+    # def read_teleop_force_and_torque(self, fx, fy, tz, suffix):
+    #     teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")
+    #     teleop_torque_b = getattr(self, f"teleop_torque_b_{suffix}")
+    #     teleop_force_b.zero_()
+    #     teleop_torque_b.zero_()
+    #     teleop_force_b[0, 2] = -fx
+    #     teleop_force_b[0, 0] = fy # only the first env
+    #     teleop_torque_b[0, 1] = -tz
+
+    def read_joystick(self, j1x, j1y, j2x, suffix):
+        hp2w = 745.7
+        boat_hp = 3400
+        boat_w = boat_hp * hp2w
+        ang2lin_distribution_ratio = 1 # defines the power distribution between linear and angular movement
+        
+        lin_component = np.clip(np.sqrt(j1x**2 + j1y**2), 0, 1)
+        ang_component = np.clip(np.abs(j2x), 0, 1)
+        boat_actual_w = boat_w * np.max([lin_component, ang_component])
+        total = np.clip(lin_component + ang2lin_distribution_ratio * ang_component, 1e-6, None)
+        boat_lin_w = boat_actual_w * lin_component / total
+        boat_ang_w = boat_actual_w * ang2lin_distribution_ratio * ang_component / total
+        tensor_boat_ang_w = torch.tensor(boat_ang_w, dtype=torch.float32, device=self.device)
+        max_force = boat_w / 1
+        max_torque = boat_w / 1
+
+        theta = np.arctan2(j1y, j1x)
+        boat_lin_w_x = boat_lin_w * np.cos(theta)
+        boat_lin_w_y = boat_lin_w * np.sin(theta)
+        tensor_boat_lin_w_x = torch.tensor(boat_lin_w_x, dtype=torch.float32, device=self.device)
+        tensor_boat_lin_w_y = torch.tensor(boat_lin_w_y, dtype=torch.float32, device=self.device)
+
+        robot = getattr(self, suffix)
+        '''
+        in tugboat's body frame
+            forward: -z (2)
+            left: x (0)
+            up: -y (1)
+        '''
+        lin_vel = robot.data.root_lin_vel_b
+        ang_vel = robot.data.root_ang_vel_b
+        lin_vel_x = lin_vel[:, 0] + 1e-6  # avoid division by zero
+        lin_vel_y = -lin_vel[:, 2] + 1e-6  # avoid division by zero
+        ang_vel_z = -ang_vel[:, 1] + 1e-6  # avoid division by zero
+
+        fx = torch.clip(tensor_boat_lin_w_x / lin_vel_x, -max_force, max_force)
+        fy = torch.clip(tensor_boat_lin_w_y / lin_vel_y, -max_force, max_force)
+        tz = torch.clip(tensor_boat_ang_w / ang_vel_z, -max_torque, max_torque)
+
         teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")
         teleop_torque_b = getattr(self, f"teleop_torque_b_{suffix}")
         teleop_force_b.zero_()
         teleop_torque_b.zero_()
-        teleop_force_b[0, 2] = -fx
-        teleop_force_b[0, 0] = fy # only the first env
+
+        teleop_force_b[0, 0] = -fx # only the first env
+        teleop_force_b[0, 2] = -fy
         teleop_torque_b[0, 1] = -tz
-
-    def read_teleop_vel(self, vx, vy, oz, suffix):
-        teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")
-        teleop_torque_b = getattr(self, f"teleop_torque_b_{suffix}")
-        teleop_force_b.zero_()
-        teleop_torque_b.zero_()
-
-        teleop_force_b[0, 2] = -vx
-        teleop_force_b[0, 0] = vy # only the first env
-        teleop_torque_b[0, 1] = -oz
 
     def apply_teleop_force_and_torque(self, suffix: str):
         teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")

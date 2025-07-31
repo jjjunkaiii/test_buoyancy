@@ -45,18 +45,12 @@ import pygame
 # Xbox Series X Controller
 # Xbox One S Controller
 def process_joystick(controller):
-    x1 = - 2500000 * controller.get_axis(1)
-    y1 = - 2500000 * controller.get_axis(0)
-    if abs(x1) < 2.5:
-        x1 = 0
-    if abs(y1) < 2.5:
-        y1 = 0
-    x2 = - 25000000 * controller.get_axis(3) * 2 * np.pi / 360
-    if abs(x2) < - 25000000 * 2 * np.pi / 3600:
-        x2 = 0
-    # speed = np.sqrt(x1 * x1 + y1 * y1)
-    # course = np.rad2deg(np.arctan2(y1, x1))
-    return x1, y1, x2 # fx, fy, tz
+    joy1_x = - controller.get_axis(0) if abs(controller.get_axis(1)) >0.1 else 0
+    joy1_y = - controller.get_axis(1) if abs(controller.get_axis(0)) >0.1 else 0
+    joy2_x = - controller.get_axis(2) if abs(controller.get_axis(3)) >0.1 else 0
+    joy2_y = - controller.get_axis(3) if abs(controller.get_axis(4)) >0.1 else 0
+    print(joy1_x, joy1_y, joy2_x, joy2_y)
+    return joy1_x, joy1_y, joy2_x, joy2_y
 
 def main():
 
@@ -91,10 +85,10 @@ def main():
         with torch.inference_mode():
             pygame.event.pump()
             # sample actions from -1 to 1
-            fxS, fyS, tzS = process_joystick(gamepadS)
-            fxX, fyX, tzX = process_joystick(gamepadX)
-            env.unwrapped.read_teleop_force_and_torque(fxS, fyS, tzS, 'tugboat1')
-            env.unwrapped.read_teleop_force_and_torque(fxX, fyX, tzX, 'tugboat2')
+            joy1_xS, joy1_yS, joy2_xS, joy2_yS = process_joystick(gamepadS)
+            joy1_xX, joy1_yX, joy2_xX, joy2_yX = process_joystick(gamepadX)
+            env.unwrapped.read_joystick(joy1_xS, joy1_yS, joy2_xS, 'tugboat1')
+            env.unwrapped.read_joystick(joy1_xX, joy1_yX, joy2_xX, 'tugboat2')
 
             actions = 2 * torch.rand(env.action_space.shape, device=env.unwrapped.device) - 1
             # apply actions
