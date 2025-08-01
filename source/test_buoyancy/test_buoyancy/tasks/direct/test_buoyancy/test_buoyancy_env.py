@@ -43,7 +43,7 @@ python scripts/random_agent.py --task=Template-Test-Buoyancy-Direct-v0
 
 extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
 water_path = "asset/mesh/water/omni.ocean-0.4.1/data/ocean_small.usd"
-barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/base_link.STL"
+barge_mesh_path = "asset/mesh/URDF2/barge.SLDASM/meshes/barge.STL"
 tugboat_mesh_path = "asset/mesh/URDF3/TUGBOAT.SLDASM/meshes/tugboat.STL"
 
 class TestBuoyancyEnv(DirectRLEnv):
@@ -576,7 +576,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float32, device=self.device)
 
     def update_attr(self):
-        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.2)
+        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.5)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()

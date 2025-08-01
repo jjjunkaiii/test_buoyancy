@@ -45,14 +45,14 @@ import pygame
 # Xbox Series X Controller
 # Xbox One S Controller
 def process_joystick(controller):
-    x1 = - 2500000 * controller.get_axis(1)
-    y1 = - 2500000 * controller.get_axis(0)
+    x1 = - 1000000 * controller.get_axis(1)
+    y1 = - 1000000 * controller.get_axis(0)
     if abs(x1) < 2.5:
         x1 = 0
     if abs(y1) < 2.5:
         y1 = 0
-    x2 = - 25000000 * controller.get_axis(3) * 2 * np.pi / 360
-    if abs(x2) < - 25000000 * 2 * np.pi / 3600:
+    x2 = - 10000000 * controller.get_axis(3) * 2 * np.pi / 360
+    if abs(x2) < - 10000000 * 2 * np.pi / 3600:
         x2 = 0
     # speed = np.sqrt(x1 * x1 + y1 * y1)
     # course = np.rad2deg(np.arctan2(y1, x1))
