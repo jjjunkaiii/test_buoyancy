@@ -55,7 +55,7 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
                 ),
                 init_state=RigidObjectCfg.InitialStateCfg(
                     pos=(0.0, 0.0, 20.0),
-                    rot=(-0.7071, 0.7071, 0, 0),
+                    rot=(0, 0, 0.7071, -0.7071),
                     ),
                 debug_vis = True
 
