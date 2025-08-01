@@ -89,7 +89,10 @@ class TestBuoyancyEnv(DirectRLEnv):
         setattr(self, f"buoyancy_torque_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
         setattr(self, f"buoyancy_centre_w_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
         setattr(self, f"buoyancy_centre_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
-
+        setattr(self, f"external_force_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"external_torque_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"teleop_force_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
+        setattr(self, f"teleop_torque_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
 
     def _setup_scene(self):
         # No.4
@@ -137,11 +140,21 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
-        # No.6
+        self.reset_external_force_and_torque(suffix="barge")
+        self.reset_external_force_and_torque(suffix="tugboat1")
+        self.reset_external_force_and_torque(suffix="tugboat2")
+
         self.apply_buoyancy(suffix="barge")
         self.apply_buoyancy(suffix="tugboat1")
         self.apply_buoyancy(suffix="tugboat2")
 
+        self.apply_teleop_force_and_torque(suffix="barge")
+        self.apply_teleop_force_and_torque(suffix="tugboat1")
+        self.apply_teleop_force_and_torque(suffix="tugboat2")
+
+        self.apply_external_force_and_torque(suffix="barge")
+        self.apply_external_force_and_torque(suffix="tugboat1")
+        self.apply_external_force_and_torque(suffix="tugboat2")
 
     def _apply_action(self) -> None:
         # self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
@@ -300,7 +313,8 @@ class TestBuoyancyEnv(DirectRLEnv):
         buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")
         buoyancy_force_b = getattr(self, f"buoyancy_force_b_{suffix}")
         buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")
-        robot = getattr(self, suffix)
+        external_force_b = getattr(self, f"external_force_b_{suffix}")
+        external_torque_b = getattr(self, f"external_torque_b_{suffix}")
         
         # Calculate the buoyancy force for each voxel
         mask = getattr(self, f"submerged_mask_{suffix}")
@@ -322,10 +336,13 @@ class TestBuoyancyEnv(DirectRLEnv):
 
                 self.calculate_buoyancy_wrench(i, suffix=suffix)
 
-                robot.set_external_force_and_torque(forces=buoyancy_force_b[i], torques=-buoyancy_torque_b[i], env_ids=i)
             else:
-
-                robot.set_external_force_and_torque(forces=torch.zeros(3), torques=torch.zeros(3), env_ids=i)
+                buoyancy_force_w[i].zero_()
+                buoyancy_centre_w[i].zero_()
+                buoyancy_torque_b[i].zero_()
+                buoyancy_force_b[i].zero_()
+            external_force_b[i] += buoyancy_force_b[i]
+            external_torque_b[i] += -buoyancy_torque_b[i]
 
     def calculate_buoyancy_wrench(self, env, suffix: str):
         robot = getattr(self, suffix)
@@ -347,6 +364,19 @@ class TestBuoyancyEnv(DirectRLEnv):
         buoyancy_force_b[env] = torch.matmul(R[env].T, buoyancy_force_w[env])
 
         buoyancy_torque_b[env] = torch.matmul(R[env].T, buoyancy_torque_w[env])
+
+    def apply_external_force_and_torque(self, suffix: str):
+        robot = getattr(self, suffix)
+        external_force_b = getattr(self, f"external_force_b_{suffix}")
+        external_torque_b = getattr(self, f"external_torque_b_{suffix}")
+        for i in range(self.num_envs):
+            robot.set_external_force_and_torque(forces=external_force_b[i], torques=external_torque_b[i], env_ids=i)
+
+    def reset_external_force_and_torque(self, suffix: str):
+        external_force_b = getattr(self, f"external_force_b_{suffix}")
+        external_torque_b = getattr(self, f"external_torque_b_{suffix}")
+        external_force_b.zero_()
+        external_torque_b.zero_()
 
 # ----------- debug visualisations -----------
     def _define_markers(self, suffix: str) -> VisualizationMarkers:
@@ -463,7 +493,34 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     #     self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)  
 
+# ----------- teleoperation -----------
+    def read_teleop_force_and_torque(self, fx, fy, tz, suffix):
+        teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")
+        teleop_torque_b = getattr(self, f"teleop_torque_b_{suffix}")
+        teleop_force_b.zero_()
+        teleop_torque_b.zero_()
+        teleop_force_b[0, 2] = -fx
+        teleop_force_b[0, 0] = fy # only the first env
+        teleop_torque_b[0, 1] = -tz
 
+    def read_teleop_vel(self, vx, vy, oz, suffix):
+        teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")
+        teleop_torque_b = getattr(self, f"teleop_torque_b_{suffix}")
+        teleop_force_b.zero_()
+        teleop_torque_b.zero_()
+
+        teleop_force_b[0, 2] = -vx
+        teleop_force_b[0, 0] = vy # only the first env
+        teleop_torque_b[0, 1] = -oz
+
+    def apply_teleop_force_and_torque(self, suffix: str):
+        teleop_force_b = getattr(self, f"teleop_force_b_{suffix}")
+        teleop_torque_b = getattr(self, f"teleop_torque_b_{suffix}")
+        external_force_b = getattr(self, f"external_force_b_{suffix}")
+        external_torque_b = getattr(self, f"external_torque_b_{suffix}")
+        for i in range(self.num_envs):
+            external_force_b[i] += teleop_force_b[i]
+            external_torque_b[i] += teleop_torque_b[i]
 
 # @torch.jit.script
 # def compute_rewards(
@@ -519,7 +576,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float32, device=self.device)
 
     def update_attr(self):
-        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.2)
+        self.inputs_waveAmplitude = self.node.get_attribute("inputs:waveAmplitude").set(0.5)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
@@ -559,9 +616,9 @@ class OceanDeformer:
         disp, mask = self.update_points(points, water_level)
         time4 = time.time()
 
-        print("time for update_time", time2-time1)
-        print("time for update_profile", time3-time2)
-        print("time for update_points", time4-time3)
+        # print("time for update_time", time2-time1)
+        # print("time for update_profile", time3-time2)
+        # print("time for update_points", time4-time3)
 
         return disp, mask
 
