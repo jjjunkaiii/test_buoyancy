@@ -222,7 +222,7 @@ class TestBuoyancyEnv(DirectRLEnv):
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self, mesh_path: str, suffix: str):
-        voxel_res = 64
+        voxel_res = 32
         mesh = trimesh.load(os.path.join(extention_path, mesh_path))
         bounds = mesh.bounds
         min_bound, max_bound = bounds[0], bounds[1]
@@ -253,14 +253,14 @@ class TestBuoyancyEnv(DirectRLEnv):
         setattr(self, f"inside_mask_{suffix}", torch.tensor(inside_mask, dtype=torch.bool, device=self.device))
 
         setattr(self, f"valid_voxels_{suffix}", torch.tensor(valid_voxels, dtype=torch.float32, device=self.device))
-         # only displays the approximated value, torch will use the precise value for calculation
+        # only displays the approximated value, torch will use the precise value for calculation
         setattr(self, f"voxel_volume_{suffix}", torch.tensor(voxel_volume, dtype=torch.float32, device=self.device))
 
         voxel_pos_w = torch.zeros((self.num_envs, valid_voxels.shape[0], 3), dtype=torch.float32, device=self.device)
         setattr(self, f"voxel_pos_w_{suffix}", voxel_pos_w)
 
         setattr(self, f"submerged_mask_{suffix}", torch.zeros((self.num_envs, valid_voxels.shape[0]), dtype=torch.bool))
-     
+
 
     def get_pose_mat(self, suffix: str):
 
@@ -505,7 +505,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
     def init_attr(self):
-        self.node.get_attribute("inputs:waveAmplitude").set(1.0)
+        self.node.get_attribute("inputs:waveAmplitude").set(0.2)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
@@ -586,20 +586,9 @@ class OceanDeformer:
         self.space_pos = self.space_pos.to(torch.float16)
 
     def compute(self, points, water_level):
-        time1 = time.time()
         self.update_time_attr()
-        # self.time = 123.456
-        time2 = time.time()
         self.update_profile()
-        time3 = time.time()
         disp, mask = self.update_points(points, water_level)
-        time4 = time.time()
-        # print num points
-        print(f"Number of points: {points.shape[0]}")
-        print("time for update_time", time2-time1)
-        print("time for update_profile", time3-time2)
-        print("time for update_points", time4-time3)
-
         return disp, mask
     
     @torch.no_grad()
