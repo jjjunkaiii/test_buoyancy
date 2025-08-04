@@ -137,7 +137,7 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
-        # No.6
+        self.oceandeformer.update_time()
         self.apply_buoyancy(suffix="barge")
         self.apply_buoyancy(suffix="tugboat1")
         self.apply_buoyancy(suffix="tugboat2")
@@ -505,7 +505,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
     def init_attr(self):
-        self.node.get_attribute("inputs:waveAmplitude").set(0.2)
+        self.node.get_attribute("inputs:waveAmplitude").set(1)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
@@ -529,13 +529,14 @@ class OceanDeformer:
         self.campos = torch.tensor(self.inputs_cameraPos, device=self.device, dtype=torch.float64)
 
         # update time attribute
-        self.update_time_attr()
+        self.update_time()
     
     @torch.no_grad()
-    def update_time_attr(self):
+    def update_time(self):
         self.inputs_time = self.node.get_attribute("inputs:time").get()
         self.time = torch.tensor(float(self.inputs_time), device=self.device, dtype=torch.float16)
-
+    
+    @torch.no_grad()
     def init_variables(self):
         # Generate shared random arrays (fixed seed to match Warp)
         np.random.seed(7)
@@ -586,7 +587,6 @@ class OceanDeformer:
         self.space_pos = self.space_pos.to(torch.float16)
 
     def compute(self, points, water_level):
-        self.update_time_attr()
         self.update_profile()
         disp, mask = self.update_points(points, water_level)
         return disp, mask
