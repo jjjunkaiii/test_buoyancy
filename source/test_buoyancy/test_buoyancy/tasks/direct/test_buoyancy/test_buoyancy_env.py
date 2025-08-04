@@ -134,7 +134,7 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
-        self.oceandeformer.update_time()
+        self.oceandeformer.update()
         self.apply_buoyancy(suffix="barge")
         self.apply_buoyancy(suffix="tugboat1")
         self.apply_buoyancy(suffix="tugboat2")
@@ -437,13 +437,13 @@ class OceanDeformer:
         self.profile_extent = 410.0
         self.gravity = gravity
         # init attributes
-        self.init_attr()
+        self._init_attr()
         # init variables
-        self.init_variables()
+        self._init_variables()
 
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
-    def init_attr(self):
+    def _init_attr(self):
         self.node.get_attribute("inputs:waveAmplitude").set(1)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
@@ -471,12 +471,7 @@ class OceanDeformer:
         self.update_time()
     
     @torch.no_grad()
-    def update_time(self):
-        self.inputs_time = self.node.get_attribute("inputs:time").get()
-        self.time = torch.tensor(float(self.inputs_time), device=self.device, dtype=torch.float16)
-    
-    @torch.no_grad()
-    def init_variables(self):
+    def _init_variables(self):
         # Generate shared random arrays (fixed seed to match Warp)
         np.random.seed(7)
         self.rand_arr_profile = torch.tensor(
@@ -491,7 +486,7 @@ class OceanDeformer:
         self.omega = omega0 + (omega1 - omega0) * torch.arange(self.profile_data_num, device=self.device, dtype=torch.float64) / self.profile_data_num
         self.omega_delta = (omega1 - omega0) / self.profile_data_num
         self.k = self.omega ** 2 / self.gravity   
-        self.amp = 10000.0 * torch.sqrt(torch.abs(2.0 * self.omega_delta * self.TMA_spectrum(self.omega, 100.0, 3.3)))
+        self.amp = 10000.0 * torch.sqrt(torch.abs(2.0 * self.omega_delta * self._TMA_spectrum(self.omega, 100.0, 3.3)))
         # Spatial sample positions
         self.x_idx = torch.arange(self.profile_res, device=self.device, dtype=torch.float64)
         self.space_pos = self.profile_extent * self.x_idx / self.profile_res  # (res,)
@@ -525,11 +520,20 @@ class OceanDeformer:
         self.dir_amp = self.dir_amp.to(torch.float16)
         self.space_pos = self.space_pos.to(torch.float16)
 
-    def compute(self, points, water_level):
+    def update(self):
+        self.update_time()
         self.update_profile()
-        disp, mask = self.update_points(points, water_level)
+
+    def compute(self, points, water_level):
+        # self.update_profile()
+        disp, mask = self._update_points(points, water_level)
         return disp, mask
     
+    @torch.no_grad()
+    def update_time(self):
+        self.inputs_time = self.node.get_attribute("inputs:time").get()
+        self.time = torch.tensor(float(self.inputs_time), device=self.device, dtype=torch.float16)
+
     @torch.no_grad()
     def update_profile(self):
         # Wavenumber and phase            # (N,)
@@ -555,7 +559,7 @@ class OceanDeformer:
         self.profile = disp1 + self.c1.unsqueeze(1) * disp2 + self.c2.unsqueeze(1) * disp3  # (res, 3)
 
     @torch.no_grad()
-    def update_points(self, points, water_level=0.0):
+    def _update_points(self, points, water_level=0.0):
         points_xy = torch.stack([points[:, 0], -points[:, 1]], dim=1).to(torch.float16)
         dots = torch.matmul(points_xy, self.dirs.mT)     # shape: (N, D)
 
@@ -581,7 +585,7 @@ class OceanDeformer:
 
         return disp_z, submerged_mask
 
-    def TMA_spectrum(self, omega, fetch_km, gamma):
+    def _TMA_spectrum(self, omega, fetch_km, gamma):
         fetch = 1000.0 * fetch_km
         alpha = 0.076 * (self.windspeed ** 2 / (self.gravity * fetch)) ** 0.22
         peak_omega = 22.0 * torch.abs((self.gravity ** 2 / (self.windspeed * fetch))) ** (1.0 / 3.0)
