@@ -53,23 +53,21 @@ class TestBuoyancyEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         # init buoyancy related buffers
-        # No.1
         self._init_robot_buffers("barge")
         self._init_robot_buffers("tugboat1")
         self._init_robot_buffers("tugboat2")
 
-        # No.2
         self._load_voxel(mesh_path=barge_mesh_path, suffix="barge")
         self._load_voxel(mesh_path=tugboat_mesh_path, suffix="tugboat1")
         self._load_voxel(mesh_path=tugboat_mesh_path, suffix="tugboat2")
 
-
         self.debug_visualisation = True
-        # No.3
+
         if self.debug_visualisation:
-            self._define_markers("barge")
-            self._define_markers("tugboat1")
-            self._define_markers("tugboat2")
+            self._define_voxel_markers("barge")
+            self._define_voxel_markers("tugboat1")
+            self._define_voxel_markers("tugboat2")
+            self._define_voxel_markers("buoy")
 
         self.oceandeformer = OceanDeformer(device=self.device)
         # time.sleep(10) # TODO:remove in the future
@@ -89,7 +87,6 @@ class TestBuoyancyEnv(DirectRLEnv):
         setattr(self, f"buoyancy_torque_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
         setattr(self, f"buoyancy_centre_w_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
         setattr(self, f"buoyancy_centre_b_{suffix}", torch.zeros((self.num_envs, 3), device=self.device))
-
 
     def _setup_scene(self):
         # No.4
@@ -141,7 +138,6 @@ class TestBuoyancyEnv(DirectRLEnv):
         self.apply_buoyancy(suffix="barge")
         self.apply_buoyancy(suffix="tugboat1")
         self.apply_buoyancy(suffix="tugboat2")
-
 
     def _apply_action(self) -> None:
         # self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
@@ -213,12 +209,11 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def step(self, action):
         super().step(action)
-        # No.7
         if self.debug_visualisation:
-            self._visualise_markers("barge")
-            self._visualise_markers("tugboat1")
-            self._visualise_markers("tugboat2")
-
+            self._visualise_voxels("barge")
+            self._visualise_voxels("tugboat1")
+            self._visualise_voxels("tugboat2")
+            self._visualise_buoys()
 
 # ----------- buoyancy related functions -----------
     def _load_voxel(self, mesh_path: str, suffix: str):
@@ -261,7 +256,6 @@ class TestBuoyancyEnv(DirectRLEnv):
 
         setattr(self, f"submerged_mask_{suffix}", torch.zeros((self.num_envs, valid_voxels.shape[0]), dtype=torch.bool))
 
-
     def get_pose_mat(self, suffix: str):
 
         robot = getattr(self, suffix)
@@ -293,7 +287,6 @@ class TestBuoyancyEnv(DirectRLEnv):
         Apply buoyancy force to the rigid object based on the voxel positions and water level.
         """
         self.get_voxel_pos_w(suffix=suffix)
-
         voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
         voxel_volume = getattr(self, f"voxel_volume_{suffix}")
         buoyancy_force_w = getattr(self, f"buoyancy_force_w_{suffix}")
@@ -307,24 +300,16 @@ class TestBuoyancyEnv(DirectRLEnv):
 
         for i in range(self.num_envs):
             water_height, submerged_mask = self.oceandeformer.compute(voxel_pos_w[i], self.cfg.water_level)
-
             mask[i] = submerged_mask
-
             submerged_voxels = voxel_pos_w[i][submerged_mask]
             num_submerged_voxels = submerged_voxels.shape[0] #TODO: pre-allocate memory to speed up in the future
             if num_submerged_voxels != 0:
-
                 submerged_volume = num_submerged_voxels * voxel_volume.item()
-
                 buoyancy_force_w[i, 2] = submerged_volume * water_density * 9.81
-
                 buoyancy_centre_w[i] = submerged_voxels.mean(dim=0)
-
                 self.calculate_buoyancy_wrench(i, suffix=suffix)
-
                 robot.set_external_force_and_torque(forces=buoyancy_force_b[i], torques=-buoyancy_torque_b[i], env_ids=i)
             else:
-
                 robot.set_external_force_and_torque(forces=torch.zeros(3), torques=torch.zeros(3), env_ids=i)
 
     def calculate_buoyancy_wrench(self, env, suffix: str):
@@ -335,71 +320,63 @@ class TestBuoyancyEnv(DirectRLEnv):
         buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")
         buoyancy_torque_w = getattr(self, f"buoyancy_torque_w_{suffix}")
         buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")
-
         c_m_w = robot.data.body_com_pos_w[env][0]
-
         c_b_w = buoyancy_centre_w[env]
-
         c_delta_w = c_m_w - c_b_w
-
         buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, buoyancy_force_w[env])
-
         buoyancy_force_b[env] = torch.matmul(R[env].T, buoyancy_force_w[env])
-
         buoyancy_torque_b[env] = torch.matmul(R[env].T, buoyancy_torque_w[env])
 
 # ----------- debug visualisations -----------
-    def _define_markers(self, suffix: str) -> VisualizationMarkers:
+    def _define_voxel_markers(self, suffix: str) -> VisualizationMarkers:
         """Define markers with various different shapes."""
-        from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
-        voxel_l = getattr(self, f"voxel_l_{suffix}")
-        voxel_w = getattr(self, f"voxel_w_{suffix}")
-        voxel_h = getattr(self, f"voxel_h_{suffix}")
-
-        marker_cfg = VisualizationMarkersCfg(
-            prim_path=f"/Markers_{suffix}",
+        if suffix != 'buoy':
+            voxel_l = getattr(self, f"voxel_l_{suffix}")
+            voxel_w = getattr(self, f"voxel_w_{suffix}")
+            voxel_h = getattr(self, f"voxel_h_{suffix}")
             markers={
-                # "frame": sim_utils.UsdFileCfg(
-                #     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-                #     scale=(1, 1, 1),
-                # ),
-                # "arrow_x": sim_utils.UsdFileCfg(
-                #     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                #     scale=(1.0, 0.5, 0.5),
-                #     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
-                # ),
-                "cube_red": sim_utils.CuboidCfg(
+                "unsubmerged": sim_utils.CuboidCfg(
                 size=(voxel_l*0.8, voxel_w*0.8, voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0),),
                 visible=False,
                 ),
-                "cube_blue": sim_utils.CuboidCfg(
+                "submerged": sim_utils.CuboidCfg(
                 size=(voxel_l*0.8, voxel_w*0.8, voxel_h*0.8),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
                 visible=False,
                 ),
+            }
+            voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
+            num_voxels = voxel_pos_w.shape[1]
+            setattr(self, f"marker_indices_{suffix}", torch.zeros(num_voxels, dtype=torch.float32, device=self.device))
+            setattr(self, f"marker_translations_{suffix}", torch.zeros(num_voxels, 3, dtype=torch.float32, device=self.device))
+            setattr(self, f"marker_orientations_{suffix}", torch.zeros(num_voxels, 4, dtype=torch.float32, device=self.device))
+        elif suffix == 'buoy':
+            markers={
                 "buoy": sim_utils.SphereCfg(
-                    radius=1.0,
+                    radius=0.5,
                     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                    visible=False,
+                    visible=True,
                 ),   
-                # "arrow_z": sim_utils.UsdFileCfg(
-                #     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                #     scale=(1, 1, 5),
-                #     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                # ),
-
-            },
+            }
+            angles = 72
+            radius = 30
+            self.num_buoys = angles * radius + 1
+            self.water_surface_target_pos = torch.zeros((self.num_buoys, 3), dtype=torch.float32, device=self.device)
+            for angle in range(angles):
+                for r in range(radius):
+                    x = (r+1) * math.cos(angle * 2 * math.pi / angles) * (100 / radius)
+                    y = (r+1) * math.sin(angle * 2 * math.pi / angles) * (100 / radius)
+                    z = 0.0
+                    self.water_surface_target_pos[angle * radius + r] = torch.tensor([x, y, z], device=self.device)
+            self.water_surface_target_pos[-1] = torch.tensor([0.0, 0.0, 0.0], device=self.device)
+        marker_cfg = VisualizationMarkersCfg(
+            prim_path=f"/DebugVis/Markers_{suffix}",
+            markers=markers
         )
         setattr(self, f"marker_{suffix}", VisualizationMarkers(marker_cfg))
-        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
-        num_voxels = voxel_pos_w.shape[1]
-        setattr(self, f"marker_indices_{suffix}", torch.zeros(num_voxels, dtype=torch.float32, device=self.device))
-        setattr(self, f"marker_translations_{suffix}", torch.zeros(num_voxels, 3, dtype=torch.float32, device=self.device))
-        setattr(self, f"marker_orientations_{suffix}", torch.zeros(num_voxels, 4, dtype=torch.float32, device=self.device))
 
-
-    def _visualise_markers(self, suffix: str):
+    def _visualise_voxels(self, suffix: str):
         robot = getattr(self, suffix)
         voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
         marker = getattr(self, f"marker_{suffix}")
@@ -410,58 +387,20 @@ class TestBuoyancyEnv(DirectRLEnv):
         rigid_body_states = robot.data.root_link_pose_w
 
         # mask = voxel_pos_w[0, :, 2] < 5.0# TODO
-        mask = mask_all[0]
-
-
+        mask = mask_all[0] # use the first env's mask
         marker_indices[:] = mask.int()
-
         marker_translations[:] = voxel_pos_w[0]
-
         marker_orientations[:] = rigid_body_states[0][3:7]
-
         marker.visualize(translations=marker_translations, orientations=marker_orientations, marker_indices=marker_indices)  
 
-    # def _visualise_markers(self):
-    #     rigid_body_states = self.robot.data.root_link_pose_w
-    #     # mask = self.voxel_pos_w[0, :, 2] < self.cfg.water_level
-    #     self.marker_indices[:self.voxel_pos_w.shape[1]] = self.submerged_mask
-    #     self.marker_translations[:self.voxel_pos_w.shape[1]] = self.voxel_pos_w[0]
-    #     self.marker_orientations[:self.voxel_pos_w.shape[1]] = rigid_body_states[0][3:7]
+    def _visualise_buoys(self):
+        self.buoy_indices = torch.full((self.num_buoys,), 0, device=self.device)
+        self.buoy_translations = torch.clone(self.water_surface_target_pos)
+        disp, _ = self.oceandeformer.compute(self.water_surface_target_pos, self.cfg.water_level)
+        self.buoy_translations[:, 2] = disp
+        self.buoy_orientations = torch.tensor([0.7071,0,-0.7071,0], device=self.device).repeat(self.num_buoys,1)
 
-    #     # water related markers
-    #     self.water_surface_target_pos = torch.tensor([[50,0,0],
-    #                                                   [0,50,0],
-    #                                                   [-50,0,0],
-    #                                                   [0,-50,0],
-    #                                                   [25,0,0],
-    #                                                   [0,25,0],
-    #                                                   [-25,0,0],
-    #                                                   [0,-25,0],
-    #                                                   [35.35/2,35.35/2,0],
-    #                                                   [-35.35/2,35.35/2,0],
-    #                                                   [35.35/2,-35.35/2,0],
-    #                                                   [-35.35/2,-35.35/2,0],
-    #                                                   [0,0,0],], device=self.device)
-    #     # sample_point = np.array([  [ -25.22   ,    0.     , -499.365  ],
-    #     #                         [ 242.335  ,    0.     , -347.63   ],
-    #     #                         [ 207.19499,    0.     , -251.9    ],
-    #     #                         [ 287.47498,    0.     , -168.3    ],
-    #     #                         [-253.91998,    0.     ,  -88.265  ],
-    #     #                         [  25.425  ,    0.     ,  -11.29   ],
-    #     #                         [ 170.26999,    0.     ,   64.31   ],
-    #     #                         [ 109.64   ,    0.     ,  142.92   ],
-    #     #                         [ 136.72   ,    0.     ,  224.76999],
-    #     #                         [-248.455  ,    0.     ,  316.755  ],
-    #     #                         [  66.65   ,    0.     ,  431.295  ]], dtype=np.float32)
-    #     # sample_point = sample_point[:, [0,2,1]]
-    #     # self.water_surface_target_pos = torch.tensor(sample_point, device=self.device)
-    #     self.marker_indices[-13:] = torch.full((13,), 2, device=self.device)
-    #     self.marker_translations[-13:] = self.water_surface_target_pos
-    #     disp, _ = self.oceandeformer.compute(self.water_surface_target_pos, self.cfg.water_level)
-    #     self.marker_translations[-13:, 2] = disp
-    #     self.marker_orientations[-13:] = torch.tensor([0.7071,0,-0.7071,0], device=self.device).repeat(13,1)
-
-    #     self.marker.visualize(translations=self.marker_translations, orientations=self.marker_orientations, marker_indices=self.marker_indices,)  
+        self.marker_buoy.visualize(translations=self.buoy_translations, orientations=self.buoy_orientations, marker_indices=self.buoy_indices,)  
 
 
 
