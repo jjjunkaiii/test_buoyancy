@@ -52,24 +52,65 @@ class TestBuoyancyEnv(DirectRLEnv):
     def __init__(self, cfg: TestBuoyancyEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        # init buoyancy related buffers
-        self._init_robot_buffers("barge")
-        self._init_robot_buffers("tugboat1")
-        self._init_robot_buffers("tugboat2")
+        # Define robot names and mesh paths
+        self.robot_names = ["barge", "tugboat1", "tugboat2"]
+        self.mesh_paths = [
+            barge_mesh_path,
+            tugboat_mesh_path,
+            tugboat_mesh_path,
+        ]
 
-        self._load_voxel(mesh_path=barge_mesh_path, suffix="barge")
-        self._load_voxel(mesh_path=tugboat_mesh_path, suffix="tugboat1")
-        self._load_voxel(mesh_path=tugboat_mesh_path, suffix="tugboat2")
+        # Init robot buffers and voxel data
+        self.robots = []
+        self.voxel_data = []
+        self.num_voxels = []
+        for name, mesh_path in zip(self.robot_names, self.mesh_paths):
+            self._init_robot_buffers(name)
+            self._load_voxel(mesh_path=mesh_path, suffix=name)
+            self.robots.append(getattr(self, name))
+            valid_voxels = getattr(self, f"valid_voxels_{name}")
+            self.num_voxels.append(valid_voxels.shape[0])
+            self.voxel_data.append(valid_voxels)
 
         self.debug_visualisation = True
 
         if self.debug_visualisation:
-            self._define_voxel_markers("barge")
-            self._define_voxel_markers("tugboat1")
-            self._define_voxel_markers("tugboat2")
+            self.debug_vis = []
+            for name in self.robot_names:
+                self._define_voxel_markers(name)
+                self.debug_vis.append(getattr(self, f"marker_{name}"))
             self._define_voxel_markers("buoy")
 
-        self.oceandeformer = OceanDeformer(device=self.device)
+        # Batchify all voxel positions for all robots
+        self.total_voxels = sum(self.num_voxels)
+        self.voxel_robot_slices = []
+        start = 0
+        for n in self.num_voxels:
+            self.voxel_robot_slices.append(slice(start, start + n))
+            start += n
+
+        # Preallocate batch voxel positions (num_env, total_voxels, 3)
+        self.voxel_pos_w = torch.zeros((self.num_envs, self.total_voxels, 3), dtype=torch.float32, device=self.device)
+
+        # Instantiate batch OceanDeformer
+        self.oceandeformer = OceanDeformer(
+            num_env=self.num_envs,
+            num_points=self.total_voxels,
+            device=self.device,
+        )
+
+        # For debug visualisation (buoys), use a separate OceanDeformer
+        if self.debug_visualisation:
+            self.num_buoys = 72 * 30 + 1
+            self.water_surface_target_pos = torch.zeros((self.num_buoys, 3), dtype=torch.float32, device=self.device)
+            for angle in range(72):
+                for r in range(30):
+                    x = (r+1) * math.cos(angle * 2 * math.pi / 72) * (100 / 30)
+                    y = (r+1) * math.sin(angle * 2 * math.pi / 72) * (100 / 30)
+                    z = 0.0
+                    self.water_surface_target_pos[angle * 30 + r] = torch.tensor([x, y, z], device=self.device)
+            self.water_surface_target_pos[-1] = torch.tensor([0.0, 0.0, 0.0], device=self.device)
+            self.oceandeformer_buoy = OceanDeformer(num_env=1, num_points=self.num_buoys, device=self.device)
         # time.sleep(10) # TODO:remove in the future
 
         # self._cart_dof_idx, _ = self.robot.find_joints(self.cfg.cart_dof_name)
@@ -135,9 +176,9 @@ class TestBuoyancyEnv(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
         self.oceandeformer.update()
-        self.apply_buoyancy(suffix="barge")
-        self.apply_buoyancy(suffix="tugboat1")
-        self.apply_buoyancy(suffix="tugboat2")
+        if self.debug_visualisation:
+            self.oceandeformer_buoy.update()
+        self.apply_buoyancy()
 
     def _apply_action(self) -> None:
         # self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
@@ -210,9 +251,8 @@ class TestBuoyancyEnv(DirectRLEnv):
     def step(self, action):
         super().step(action)
         if self.debug_visualisation:
-            self._visualise_voxels("barge")
-            self._visualise_voxels("tugboat1")
-            self._visualise_voxels("tugboat2")
+            for name in self.robot_names:
+                self._visualise_voxels(name)
             self._visualise_buoys()
 
 # ----------- buoyancy related functions -----------
@@ -228,27 +268,20 @@ class TestBuoyancyEnv(DirectRLEnv):
         zs = np.arange(min_bound[2], max_bound[2], interval[2])
 
         xv, yv, zv = np.meshgrid(xs, ys, zs, indexing='ij')
-
         voxel_centers = np.vstack([xv.ravel(), yv.ravel(), zv.ravel()]).T
         t_start = time.time()
-
         inside_mask = mesh.contains(voxel_centers)
         t_end = time.time()
-
         print(f"[{suffix}] Mask generated, time used: {t_end - t_start:.4f} sec")
 
         valid_voxels = voxel_centers[inside_mask]
-
         voxel_volume = interval[0] * interval[1] * interval[2]
 
         setattr(self, f"voxel_l_{suffix}", interval[0])
         setattr(self, f"voxel_w_{suffix}", interval[1])
         setattr(self, f"voxel_h_{suffix}", interval[2])
-
         setattr(self, f"inside_mask_{suffix}", torch.tensor(inside_mask, dtype=torch.bool, device=self.device))
-
         setattr(self, f"valid_voxels_{suffix}", torch.tensor(valid_voxels, dtype=torch.float32, device=self.device))
-        # only displays the approximated value, torch will use the precise value for calculation
         setattr(self, f"voxel_volume_{suffix}", torch.tensor(voxel_volume, dtype=torch.float32, device=self.device))
 
         voxel_pos_w = torch.zeros((self.num_envs, valid_voxels.shape[0], 3), dtype=torch.float32, device=self.device)
@@ -257,75 +290,88 @@ class TestBuoyancyEnv(DirectRLEnv):
         setattr(self, f"submerged_mask_{suffix}", torch.zeros((self.num_envs, valid_voxels.shape[0]), dtype=torch.bool))
 
     def get_pose_mat(self, suffix: str):
-
         robot = getattr(self, suffix)
         rigid_body_states = robot.data.root_link_pose_w 
         rot_mats = getattr(self, f"rot_mats_{suffix}")
         R = getattr(self, f"R_{suffix}")
-        
         for i in range(self.num_envs):
-
             R[i] = matrix_from_quat(rigid_body_states[i][3:7])
-
             rot_mats[i][:3, :3] = R[i]
-
             rot_mats[i][:3, 3] = rigid_body_states[i][:3].T
-
             rot_mats[i][3, 3] = 1.0
-        
-    def get_voxel_pos_w(self,suffix: str):
 
-        self.get_pose_mat(suffix=suffix)
-        rot_mats = getattr(self, f"rot_mats_{suffix}")
-        valid_voxels = getattr(self, f"valid_voxels_{suffix}")
-        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
-        for i in range(self.num_envs):
-            voxel_pos_w[i] = (rot_mats[i][:3, :3] @ valid_voxels.T + rot_mats[i][:3, 3].unsqueeze(1)).T
+    def get_voxel_pos_w(self):
+        # Batch update all voxel positions for all robots
+        for idx, name in enumerate(self.robot_names):
+            self.get_pose_mat(suffix=name)
+            rot_mats = getattr(self, f"rot_mats_{name}")
+            valid_voxels = getattr(self, f"valid_voxels_{name}")
+            for i in range(self.num_envs):
+                self.voxel_pos_w[i, self.voxel_robot_slices[idx]] = (
+                    rot_mats[i][:3, :3] @ valid_voxels.mT + rot_mats[i][:3, 3].unsqueeze(1)
+                ).mT
 
-    def apply_buoyancy(self, water_level=0.0, water_density=1500.0, suffix: str = "barge"):
+    def apply_buoyancy(self, water_level=0.0, water_density=1500.0):
         """
-        Apply buoyancy force to the rigid object based on the voxel positions and water level.
+        Apply buoyancy force to all rigid objects in batch.
         """
-        self.get_voxel_pos_w(suffix=suffix)
-        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
-        voxel_volume = getattr(self, f"voxel_volume_{suffix}")
-        buoyancy_force_w = getattr(self, f"buoyancy_force_w_{suffix}")
-        buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")
-        buoyancy_force_b = getattr(self, f"buoyancy_force_b_{suffix}")
-        buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")
-        robot = getattr(self, suffix)
-        
-        # Calculate the buoyancy force for each voxel
-        mask = getattr(self, f"submerged_mask_{suffix}")
+        self.get_voxel_pos_w()
+        # Compute water heights and masks for all voxels in all envs
+        disp, mask = self.oceandeformer.compute(self.voxel_pos_w, self.cfg.water_level)
+        # For each robot, slice out its voxels and compute buoyancy
+        for idx, name in enumerate(self.robot_names):
+            voxel_slice = self.voxel_robot_slices[idx]
+            voxel_volume = getattr(self, f"voxel_volume_{name}")
+            buoyancy_force_w = getattr(self, f"buoyancy_force_w_{name}")
+            buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{name}")
+            buoyancy_force_b = getattr(self, f"buoyancy_force_b_{name}")
+            buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{name}")
+            robot = getattr(self, name)
+            mask_robot = mask[:, voxel_slice]  # (num_envs, num_voxels)
+            voxel_pos_robot = self.voxel_pos_w[:, voxel_slice]  # (num_envs, num_voxels, 3)
 
-        for i in range(self.num_envs):
-            water_height, submerged_mask = self.oceandeformer.compute(voxel_pos_w[i], self.cfg.water_level)
-            mask[i] = submerged_mask
-            submerged_voxels = voxel_pos_w[i][submerged_mask]
-            num_submerged_voxels = submerged_voxels.shape[0] #TODO: pre-allocate memory to speed up in the future
-            if num_submerged_voxels != 0:
-                submerged_volume = num_submerged_voxels * voxel_volume.item()
-                buoyancy_force_w[i, 2] = submerged_volume * water_density * 9.81
-                buoyancy_centre_w[i] = submerged_voxels.mean(dim=0)
-                self.calculate_buoyancy_wrench(i, suffix=suffix)
-                robot.set_external_force_and_torque(forces=buoyancy_force_b[i], torques=-buoyancy_torque_b[i], env_ids=i)
-            else:
-                robot.set_external_force_and_torque(forces=torch.zeros(3), torques=torch.zeros(3), env_ids=i)
+            # Batch: get number of submerged voxels per env
+            submerged_mask = mask_robot
+            num_submerged_voxels = submerged_mask.sum(dim=1)  # (num_envs,)
+            submerged_volume = num_submerged_voxels * voxel_volume  # (num_envs,)
 
-    def calculate_buoyancy_wrench(self, env, suffix: str):
+            # Batch: set buoyancy force (only z component nonzero)
+            buoyancy_force_w.zero_()
+            buoyancy_force_w[:, 2] = submerged_volume * water_density * 9.81
+
+            # Batch: compute buoyancy centre (mean of submerged voxels)
+            buoyancy_centre_w.zero_()
+            submerged_voxels = voxel_pos_robot * submerged_mask.unsqueeze(-1)
+            sum_submerged = submerged_voxels.sum(dim=1)  # (num_envs, 3)
+            divisor = num_submerged_voxels.clamp(min=1).unsqueeze(-1)
+            buoyancy_centre_w[:] = sum_submerged / divisor
+
+            # Batch: calculate wrenches
+            self.calculate_buoyancy_wrench_batch(name)
+
+            # Batch: set forces and torques
+            zero_mask = num_submerged_voxels == 0
+            buoyancy_force_b[zero_mask] = 0
+            buoyancy_torque_b[zero_mask] = 0
+
+            robot.set_external_force_and_torque(
+                forces=buoyancy_force_b, torques=-buoyancy_torque_b, env_ids=torch.arange(self.num_envs, device=self.device)
+            )
+
+    def calculate_buoyancy_wrench_batch(self, suffix: str):
         robot = getattr(self, suffix)
-        R = getattr(self, f"R_{suffix}")
-        buoyancy_force_w = getattr(self, f"buoyancy_force_w_{suffix}")
-        buoyancy_force_b = getattr(self, f"buoyancy_force_b_{suffix}")
-        buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")
-        buoyancy_torque_w = getattr(self, f"buoyancy_torque_w_{suffix}")
-        buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")
-        c_m_w = robot.data.body_com_pos_w[env][0]
-        c_b_w = buoyancy_centre_w[env]
-        c_delta_w = c_m_w - c_b_w
-        buoyancy_torque_w[env] = torch.linalg.cross(c_delta_w, buoyancy_force_w[env])
-        buoyancy_force_b[env] = torch.matmul(R[env].T, buoyancy_force_w[env])
-        buoyancy_torque_b[env] = torch.matmul(R[env].T, buoyancy_torque_w[env])
+        R = getattr(self, f"R_{suffix}")  # (num_envs, 3, 3)
+        buoyancy_force_w = getattr(self, f"buoyancy_force_w_{suffix}")  # (num_envs, 3)
+        buoyancy_force_b = getattr(self, f"buoyancy_force_b_{suffix}")  # (num_envs, 3)
+        buoyancy_centre_w = getattr(self, f"buoyancy_centre_w_{suffix}")  # (num_envs, 3)
+        buoyancy_torque_w = getattr(self, f"buoyancy_torque_w_{suffix}")  # (num_envs, 3)
+        buoyancy_torque_b = getattr(self, f"buoyancy_torque_b_{suffix}")  # (num_envs, 3)
+        c_m_w = robot.data.body_com_pos_w[:, 0, :]  # (num_envs, 3)
+        c_b_w = buoyancy_centre_w  # (num_envs, 3)
+        c_delta_w = c_m_w - c_b_w  # (num_envs, 3)
+        buoyancy_torque_w[:] = torch.cross(c_delta_w, buoyancy_force_w, dim=1)
+        buoyancy_force_b[:] = torch.bmm(R.transpose(1, 2), buoyancy_force_w.unsqueeze(-1)).squeeze(-1)
+        buoyancy_torque_b[:] = torch.bmm(R.transpose(1, 2), buoyancy_torque_w.unsqueeze(-1)).squeeze(-1)
 
 # ----------- debug visualisations -----------
     def _define_voxel_markers(self, suffix: str) -> VisualizationMarkers:
@@ -376,30 +422,33 @@ class TestBuoyancyEnv(DirectRLEnv):
         )
         setattr(self, f"marker_{suffix}", VisualizationMarkers(marker_cfg))
 
-    def _visualise_voxels(self, suffix: str):
-        robot = getattr(self, suffix)
-        voxel_pos_w = getattr(self, f"voxel_pos_w_{suffix}")
-        marker = getattr(self, f"marker_{suffix}")
-        marker_indices = getattr(self, f"marker_indices_{suffix}")
-        marker_translations = getattr(self, f"marker_translations_{suffix}")
-        marker_orientations = getattr(self, f"marker_orientations_{suffix}")
-        mask_all = getattr(self, f"submerged_mask_{suffix}")
+    def _visualise_voxels(self, name: str):
+        idx = self.robot_names.index(name)
+        voxel_slice = self.voxel_robot_slices[idx]
+        marker = getattr(self, f"marker_{name}")
+        marker_indices = getattr(self, f"marker_indices_{name}")
+        marker_translations = getattr(self, f"marker_translations_{name}")
+        marker_orientations = getattr(self, f"marker_orientations_{name}")
+        robot = getattr(self, name)
         rigid_body_states = robot.data.root_link_pose_w
 
-        # mask = voxel_pos_w[0, :, 2] < 5.0# TODO
-        mask = mask_all[0] # use the first env's mask
+        # Use the first env for visualization
+        mask = self.oceandeformer.submerged_mask[0, voxel_slice]
         marker_indices[:] = mask.int()
-        marker_translations[:] = voxel_pos_w[0]
+        marker_translations[:] = self.voxel_pos_w[0, voxel_slice]
         marker_orientations[:] = rigid_body_states[0][3:7]
-        marker.visualize(translations=marker_translations, orientations=marker_orientations, marker_indices=marker_indices)  
+        marker.visualize(
+            translations=marker_translations,
+            orientations=marker_orientations,
+            marker_indices=marker_indices
+        )
 
     def _visualise_buoys(self):
         self.buoy_indices = torch.full((self.num_buoys,), 0, device=self.device)
         self.buoy_translations = torch.clone(self.water_surface_target_pos)
-        disp, _ = self.oceandeformer.compute(self.water_surface_target_pos, self.cfg.water_level)
-        self.buoy_translations[:, 2] = disp
+        disp, _ = self.oceandeformer_buoy.compute(self.water_surface_target_pos.unsqueeze(0), self.cfg.water_level)
+        self.buoy_translations[:, 2] = disp[0]
         self.buoy_orientations = torch.tensor([0.7071,0,-0.7071,0], device=self.device).repeat(self.num_buoys,1)
-
         self.marker_buoy.visualize(translations=self.buoy_translations, orientations=self.buoy_orientations, marker_indices=self.buoy_indices,)  
 
 
@@ -428,7 +477,7 @@ class TestBuoyancyEnv(DirectRLEnv):
 
 # Ocean Deformer
 class OceanDeformer:
-    def __init__(self, profile_res=8192, profile_data_num=1000, direction_count=128, gravity=9.80665, device="cuda"):
+    def __init__(self, num_env, num_points, profile_res=8192, profile_data_num=1000, direction_count=128, gravity=9.80665, device="cuda"):
         self.node = og.get_node_by_path("/World/water_surface/PushGraph/ocean_deformer")
         self.profile_res = profile_res
         self.profile_data_num = profile_data_num
@@ -436,11 +485,13 @@ class OceanDeformer:
         self.device = device
         self.profile_extent = 410.0
         self.gravity = gravity
+        self.num_env = num_env
+        self.num_points = num_points
         # init attributes
         self._init_attr()
         # init variables
         self._init_variables()
-
+        self._init_buffers()
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
     def _init_attr(self):
@@ -519,13 +570,28 @@ class OceanDeformer:
         self.dirs = self.dirs.to(torch.float16)
         self.dir_amp = self.dir_amp.to(torch.float16)
         self.space_pos = self.space_pos.to(torch.float16)
+        
+    def _init_buffers(self):
+        B, N, D = self.num_env, self.num_points, self.direction_count
+        self.points_xy = torch.empty((B, N, 2), dtype=torch.float16, device=self.device)
+        self.dots = torch.empty((B, N, D), dtype=torch.float16, device=self.device)
+        self.x_proj = torch.empty((B, N, D), dtype=torch.float16, device=self.device)
+        self.x_scaled = torch.empty((B, N, D), dtype=torch.float16, device=self.device)
+        self.pos0 = torch.empty((B, N, D), dtype=torch.int32, device=self.device)
+        self.pos1 = torch.empty((B, N, D), dtype=torch.int32, device=self.device)
+        self.w = torch.empty((B, N, D), dtype=torch.float16, device=self.device)
+        self.p0 = torch.empty((B, N, D), dtype=torch.float16, device=self.device)
+        self.p1 = torch.empty((B, N, D), dtype=torch.float16, device=self.device)
+        self.disp_z = torch.empty((B, N), dtype=torch.float16, device=self.device)
+        self.submerged_mask = torch.empty((B, N), dtype=torch.bool, device=self.device)
 
     def update(self):
         self.update_time()
         self.update_profile()
 
     def compute(self, points, water_level):
-        # self.update_profile()
+        assert points.shape == (self.num_env, self.num_points, 3), \
+            f"Expected input shape ({self.num_env}, {self.num_points}, 3), but got {points.shape}"
         disp, mask = self._update_points(points, water_level)
         return disp, mask
     
@@ -560,30 +626,26 @@ class OceanDeformer:
 
     @torch.no_grad()
     def _update_points(self, points, water_level=0.0):
-        points_xy = torch.stack([points[:, 0], -points[:, 1]], dim=1).to(torch.float16)
-        dots = torch.matmul(points_xy, self.dirs.mT)     # shape: (N, D)
-
-        x_proj = dots / (self.profile_extent * self.scale) + self.rand_arr_points  # shape: (N, D)
-        x_scaled = x_proj * self.profile_res
-
-        # pos0_raw = torch.floor(x_scaled).long()
-        pos0_raw = x_scaled.to(torch.int)
-        pos0 = pos0_raw.clone()
-        pos0[pos0_raw < 0] = pos0[pos0_raw < 0] + self.profile_res - 1
-        pos0 = pos0.remainder(self.profile_res)
-        pos1 = (pos0 + 1) % self.profile_res
-
-        w = x_scaled - torch.floor(x_scaled)           # shape: (N, D)
-        p0 = self.profile[pos0, 1]                # (N, D)
-        p1 = self.profile[pos1, 1]                # (N, D)
-
-        disp_z = torch.matmul(((1.0 - w) * p0 + w * p1), self.dir_amp.mT).squeeze(1)  # shape: (N,)
-        disp_z = self.amplitude * disp_z / self.direction_count
-        disp_z += water_level
-
-        submerged_mask = disp_z > points[:, 2]  # IsaacLab: Z is up
-
-        return disp_z, submerged_mask
+        # points: (B, N, 3)
+        B, N, _ = points.shape
+        # Project to horizontal plane (Isaac: x, -y)
+        self.points_xy[:] = torch.stack([points[:, :, 0], -points[:, :, 1]], dim=2).to(torch.float16)
+        torch.matmul(self.points_xy, self.dirs.mT, out=self.dots)
+        self.x_proj[:] = self.dots / (self.profile_extent * self.scale) + self.rand_arr_points
+        self.x_scaled[:] = self.x_proj * self.profile_res
+        self.pos0[:] = torch.floor(self.x_scaled).to(torch.int32)
+        self.pos0[self.pos0 < 0] += self.profile_res - 1
+        self.pos0.remainder_(self.profile_res)
+        torch.remainder(self.pos0 + 1, self.profile_res, out=self.pos1)
+        self.w[:] = self.x_scaled - torch.floor(self.x_scaled)
+        self.p0[:] = self.profile[self.pos0, 1]
+        self.p1[:] = self.profile[self.pos1, 1]
+        temp = (1.0 - self.w) * self.p0 + self.w * self.p1  # (B, N, D)
+        disp = torch.matmul(temp, self.dir_amp.mT)
+        disp = disp.sum(dim=-1)  # (B, N)
+        self.disp_z[:] = disp * (self.amplitude / self.direction_count) + water_level
+        self.submerged_mask[:] = self.disp_z > points[:, :, 2]
+        return self.disp_z, self.submerged_mask
 
     def _TMA_spectrum(self, omega, fetch_km, gamma):
         fetch = 1000.0 * fetch_km
