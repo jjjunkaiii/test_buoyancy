@@ -112,7 +112,7 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
 
     )
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=4.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=36, env_spacing=50.0, replicate_physics=True)
 
     # custom parameters/scales
     # - controllable joint

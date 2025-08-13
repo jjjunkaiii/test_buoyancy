@@ -72,7 +72,7 @@ class TestBuoyancyEnv(DirectRLEnv):
             self.num_voxels.append(valid_voxels.shape[0])
             self.voxel_data.append(valid_voxels)
 
-        self.debug_visualisation = True
+        self.debug_visualisation = False
 
         if self.debug_visualisation:
             self.debug_vis = []
@@ -291,25 +291,33 @@ class TestBuoyancyEnv(DirectRLEnv):
 
     def get_pose_mat(self, suffix: str):
         robot = getattr(self, suffix)
-        rigid_body_states = robot.data.root_link_pose_w 
-        rot_mats = getattr(self, f"rot_mats_{suffix}")
-        R = getattr(self, f"R_{suffix}")
-        for i in range(self.num_envs):
-            R[i] = matrix_from_quat(rigid_body_states[i][3:7])
-            rot_mats[i][:3, :3] = R[i]
-            rot_mats[i][:3, 3] = rigid_body_states[i][:3].T
-            rot_mats[i][3, 3] = 1.0
+        rigid_body_states = robot.data.root_link_pose_w  # (num_envs, 7)
+        rot_mats = getattr(self, f"rot_mats_{suffix}")   # (num_envs, 4, 4)
+        R = getattr(self, f"R_{suffix}")                 # (num_envs, 3, 3)
+
+        # Compute rotation matrices for all envs at once
+        R[:] = matrix_from_quat(rigid_body_states[:, 3:7])  # (num_envs, 3, 3)
+        rot_mats.zero_()
+        rot_mats[:, :3, :3] = R
+        rot_mats[:, :3, 3] = rigid_body_states[:, :3]
+        rot_mats[:, 3, 3] = 1.0
 
     def get_voxel_pos_w(self):
         # Batch update all voxel positions for all robots
         for idx, name in enumerate(self.robot_names):
             self.get_pose_mat(suffix=name)
-            rot_mats = getattr(self, f"rot_mats_{name}")
-            valid_voxels = getattr(self, f"valid_voxels_{name}")
-            for i in range(self.num_envs):
-                self.voxel_pos_w[i, self.voxel_robot_slices[idx]] = (
-                    rot_mats[i][:3, :3] @ valid_voxels.mT + rot_mats[i][:3, 3].unsqueeze(1)
-                ).mT
+            rot_mats = getattr(self, f"rot_mats_{name}")      # (num_envs, 4, 4)
+            valid_voxels = getattr(self, f"valid_voxels_{name}")  # (num_voxels, 3)
+            N = self.num_envs
+            M = valid_voxels.shape[0]
+            # Expand valid_voxels for all envs: (num_envs, num_voxels, 3)
+            voxels = valid_voxels.unsqueeze(0).expand(N, -1, -1).contiguous()
+            # Apply rotation and translation in batch
+            R = rot_mats[:, :3, :3]  # (num_envs, 3, 3)
+            t = rot_mats[:, :3, 3]   # (num_envs, 3)
+            # (num_envs, num_voxels, 3) = bmm((num_envs, num_voxels, 3), (num_envs, 3, 3).T)
+            pos = torch.bmm(voxels, R.transpose(1, 2)) + t.unsqueeze(1)
+            self.voxel_pos_w[:, self.voxel_robot_slices[idx]] = pos
 
     def apply_buoyancy(self, water_level=0.0, water_density=1500.0):
         """
@@ -355,7 +363,7 @@ class TestBuoyancyEnv(DirectRLEnv):
             buoyancy_torque_b[zero_mask] = 0
 
             robot.set_external_force_and_torque(
-                forces=buoyancy_force_b, torques=-buoyancy_torque_b, env_ids=torch.arange(self.num_envs, device=self.device)
+                forces=buoyancy_force_b.unsqueeze(1), torques=-buoyancy_torque_b.unsqueeze(1), env_ids=torch.arange(self.num_envs, device=self.device)
             )
 
     def calculate_buoyancy_wrench_batch(self, suffix: str):
@@ -495,7 +503,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
     def _init_attr(self):
-        self.node.get_attribute("inputs:waveAmplitude").set(1)
+        self.node.get_attribute("inputs:waveAmplitude").set(0.2)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
