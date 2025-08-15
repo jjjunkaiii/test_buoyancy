@@ -7,7 +7,7 @@
 from isaaclab.assets import RigidObject, RigidObjectCfg
 
 from isaaclab.assets import ArticulationCfg
-from isaaclab.envs import DirectRLEnvCfg
+from isaaclab.envs import DirectRLEnvCfg, ViewerCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 import isaaclab.sim as sim_utils
@@ -19,10 +19,15 @@ extention_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../
 barge_path = "asset/mesh/URDF2/barge.SLDASM/urdf/barge.usd"
 tugboat_path = "asset/mesh/URDF3/TUGBOAT.SLDASM/urdf/tugboat.usd"
 
+import carb
+carb.settings.get_settings().set("persistent/app/viewport/displayOptions", 0) # Disable the grid in the viewport 
 
 @configclass
 class TestBuoyancyEnvCfg(DirectRLEnvCfg):
-    water_level = 5.0
+    viewer: ViewerCfg = ViewerCfg()
+    viewer.eye = (0.0, 100.0, 100.0)
+    viewer.lookat = (0.0, 0.0, 0.0)
+    water_level = 5.0   
     # env
     decimation = 2
     episode_length_s = 5.0
@@ -112,7 +117,7 @@ class TestBuoyancyEnvCfg(DirectRLEnvCfg):
 
     )
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=4.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=9, env_spacing=50.0, replicate_physics=True)
 
     # custom parameters/scales
     # - controllable joint
