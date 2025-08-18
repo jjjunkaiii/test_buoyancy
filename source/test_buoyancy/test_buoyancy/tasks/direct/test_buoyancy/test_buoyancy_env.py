@@ -331,7 +331,7 @@ class TestBuoyancyEnv(DirectRLEnv):
             pos = torch.bmm(voxels, R.transpose(1, 2)) + t.unsqueeze(1)
             self.voxel_pos_w[:, self.voxel_robot_slices[idx]] = pos
 
-    def apply_buoyancy(self, water_level=0.0, water_density=1500.0):
+    def apply_buoyancy(self, water_level=0.0, water_density=1025.0):
         """
         Apply buoyancy force to all rigid objects in batch.
         """
@@ -560,7 +560,7 @@ class OceanDeformer:
         self.profile = torch.zeros(self.profile_res, 3, dtype=torch.float16, device=self.device)
 
     def _init_attr(self):
-        self.node.get_attribute("inputs:waveAmplitude").set(0.2)
+        self.node.get_attribute("inputs:waveAmplitude").set(0.0)
         # get info from node
         self.inputs_antiAlias = self.node.get_attribute("inputs:antiAlias").get()
         self.inputs_cameraPos = self.node.get_attribute("inputs:cameraPos").get()
